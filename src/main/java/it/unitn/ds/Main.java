@@ -74,7 +74,14 @@ public class Main {
     // Obtain a value from nodes
     client1.tell(new Client.GetMsg(10), client1);
     client1.tell(new Client.GetMsg(30), client1);
+    try { // add sleep for testing
+      Thread.sleep(5000);
+    } catch (InterruptedException e) {}
+    client1.tell(new Client.GetMsg(10), client1);
 
+    try {
+      Thread.sleep(5000);
+    } catch (InterruptedException e) {}
 
     // Modify a given value
     //client0.tell(new Client.UpdateMsg(41,"new_val41"), client0);

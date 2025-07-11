@@ -109,14 +109,23 @@ public class Actor extends AbstractActor {
                 .orElse(null);
 
             if (best != null) {
+                // Write-back highest version to all replicas that responded with an outdated version
+                for (ActorRef node : currentView) {
+                    node.tell(new InternalUpdateMsg(msg.key, best.getRight(), best.getLeft()), getSelf());
+                }
+                getSelf().tell(new InternalUpdateMsg(msg.key, best.getRight(), best.getLeft()), getSelf());
                 pendingClients.get(msg.key).tell(new SendMsg(best.getRight()), getSelf());
                 pendingReadOperations.remove(msg.key);
             }
         }
     }
 
-    private void updateValue(UpdateMsg updateMsg){ 
-        // To be implemented
+    // Applies an update to the local store (only if new version is greater than the current one)
+    private void handleInternalUpdate(InternalUpdateMsg msg) {
+        Pair<Integer, String> existing = values.get(msg.key);
+        if (existing == null || msg.version > existing.getLeft()) {
+            values.put(msg.key, Pair.of(msg.version, msg.value));
+        }
     }
 
     // Called when timeout occurs for a pending read. If quorum was not reached, responds to the client with null.
@@ -140,6 +149,10 @@ public class Actor extends AbstractActor {
     // Sets the local key-value store with initial values.
     private void setValues(SetValues msg) {
         this.values.putAll(msg.values);
+    }
+
+    private void updateValue(UpdateMsg updateMsg){ 
+        // To be implemented
     }
 
     // ---- Message classes below ----
@@ -179,15 +192,6 @@ public class Actor extends AbstractActor {
         }
     }
 
-    public static class InternalUpdateMsg implements Serializable {
-        public final int key;
-        public final String value;
-        public InternalUpdateMsg(int key, String value) {
-            this.key = key;
-            this.value = value;
-        }
-    }
-
     public static class ReceiveMsg implements Serializable {
         public int key;
         public int version;
@@ -196,6 +200,17 @@ public class Actor extends AbstractActor {
             this.key = key;
             this.version = version;
             this.value = value;
+        }
+    }
+
+    public static class InternalUpdateMsg implements Serializable {
+        public final int key;
+        public final String value;
+        public final int version;
+        public InternalUpdateMsg(int key, String value, int version) {
+            this.key = key;
+            this.value = value;
+            this.version = version;
         }
     }
 
@@ -210,6 +225,7 @@ public class Actor extends AbstractActor {
                 .match(InternalGetMsg.class, this::handleInternalGet)
                 .match(ReceiveMsg.class, this::receiveResponses)
                 .match(Timeout.class, this::onTimeout)
+                .match(InternalUpdateMsg.class, this::handleInternalUpdate)
                 .build();
     }
 }
