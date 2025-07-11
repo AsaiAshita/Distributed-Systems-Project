@@ -17,12 +17,14 @@ dependencies {
 
     implementation "com.typesafe.akka:akka-actor_${versions.ScalaBinary}"
     testImplementation "com.typesafe.akka:akka-testkit_${versions.ScalaBinary}"
+
+    implementation 'org.apache.commons:commons-lang3:3.12.0'
 }
 
 compileJava {
     options.compilerArgs += ["-Xlint:deprecation"]
 }
-mainClassName = "it.unitn.ds1.HelloExample"
+mainClassName = "it.unitn.ds.Main"
 
 run {
     standardInput = System.in
