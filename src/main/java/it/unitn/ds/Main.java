@@ -51,7 +51,8 @@ public class Main {
     }
 
     id_ref_association = sortByValue(id_ref_association);
-    System.out.print(id_ref_association);
+    //System.out.println(id_ref_association);
+    //System.out.print(nodes);
 
     // Create a set of values for the nodes. Here we assume N=3.
     // However, per the project, N should be configurable at compile time, so
@@ -112,10 +113,30 @@ public class Main {
     ActorRef client2 = system.actorOf(Client.props(2,nodes), "client_2");
     ActorRef client3 = system.actorOf(Client.props(3,nodes), "client_3");
 
+    //Simulation to test the Join
+    /*
+    ActorRef node = system.actorOf(
+            Actor.props(23),    // actor class
+            "node_23"     // the new actor name (unique within the system)
+    );
+
+    node.tell(new Actor.JoinMsg(23, nodes.get(2)), ActorRef.noSender());
+
+    TimeUnit.SECONDS.sleep(20);
+
+    nodes.add(node);
+    node = system.actorOf(
+            Actor.props(48),    // actor class
+            "node_48"     // the new actor name (unique within the system)
+    );
+
+    node.tell(new Actor.JoinMsg(48, nodes.get(0)), ActorRef.noSender());
+     */
+
     //Simulate an execution of some update and get operations.
     //They were written randomly, so they may not be the best when testing the system.
     //However, for the time being, it illustrates whether the system works or not.
-    client1.tell(new Client.GetMsg(4), client1);
+    /*client1.tell(new Client.GetMsg(4), client1);
     client3.tell(new Client.GetMsg(9), client3);
 
     client0.tell(new Client.UpdateMsg(11, "Antananarivo"), client0);
@@ -137,6 +158,7 @@ public class Main {
     TimeUnit.SECONDS.sleep(2);
 
     client0.tell(new Client.GetMsg(24), client0);
+    */
 
     //the following is a remnant of the lab files I took inspiration from for the basis of the project
     System.out.println(">>> Press ENTER to exit <<<");
