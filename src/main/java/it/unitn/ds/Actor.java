@@ -10,23 +10,21 @@ import org.apache.commons.lang3.tuple.Pair;
 
 import it.unitn.ds.Client.GetMsg;
 import it.unitn.ds.Client.UpdateMsg;
+import it.unitn.ds.Client.UpdateClientView;
 
 public class Actor extends AbstractActor {
 
     // Node identifier
     private int id;
 
-    // Logical Clock, used to identify each request for a client
-    private int clock = 0;
+    // Read quorum
+    private static final int R = 2;
+
+    // Write quorum
+    private static final int W = 2;
 
     // Number of nodes storing the replica
-    private static final int N = 3;
-
-    // Read quorum - we generalize it to N/2 + 1, as we need W + R > N
-    private static final int R = N/2 + 1;
-
-    // Write quorum - we generalize it to N/2 + 1, as we need W > N/2 and W + R > N
-    private static final int W = N/2 + 1;
+    private static final int N = 3; 
 
     // List of other nodes in the system (excluding self)
     private ArrayList<ActorRef> currentView;
@@ -35,15 +33,11 @@ public class Actor extends AbstractActor {
     private Map<Integer, Pair<Integer,String>> values;
 
     // Keeps track of the responses received for each read request
-    private Map<String, ArrayList<Pair<Integer,String>>> pendingReads = new HashMap<>();
-
-    // Keeps track of the reads issued by a Join operation - separated from PendingReads for simplciity's sake
-    private Map<Integer, ArrayList<Pair<Integer,String>>> pendingInternalReads = new HashMap<>();
+    private Map<Integer, ArrayList<Pair<Integer,String>>> pendingReads = new HashMap<>();
 
     // Maps each read key to the client actor that requested it
-    private Map<String, ActorRef> pendingClients = new HashMap<>();
+    private Map<Integer, ActorRef> pendingClients = new HashMap<>();
 
-    // Maps each Actor in the system to its id
     private Map<ActorRef, Integer> id_ref_association = new HashMap<>();
 
     // Used for introducing randomized delays in responses
@@ -52,15 +46,16 @@ public class Actor extends AbstractActor {
     // Timeout duration for quorum wait
     private static final int TIMEOUT_MS = 2500;
 
-    //Set containing all the requests - used to preserve FIFO assumption
-    //This is due to random delays possibly breaking it
-    private ArrayList<String> fifo = new ArrayList<>();
+    // Keeps track of which keys currently have a pending read operation
+    private Set<Integer> pendingReadOperations;
 
+    private ArrayList<ActorRef> clients = new ArrayList<>();
 
     public Actor(int id) {
         this.id = id;
         this.currentView = new ArrayList<>();
         this.values = new HashMap<>();
+        this.pendingReadOperations = new HashSet<>();
     }
 
     public static Props props(int id) {
@@ -74,14 +69,10 @@ public class Actor extends AbstractActor {
         //if (pendingReadOperations.contains(getMsg.key)) {
         //    return;
         //}
-        clock = clock + 1;
-        System.out.println(clock + " for " + getSelf());
-        String request_id = getMsg.key + "id" + this.id + "c" + clock;
 
-        //pendingReadOperations.add(getMsg.key);
-        pendingReads.put(request_id, new ArrayList<>());
-        pendingClients.put(request_id, getSender());
-        fifo.add(request_id);
+        pendingReadOperations.add(getMsg.key);
+        pendingReads.put(getMsg.key, new ArrayList<>());
+        pendingClients.put(getMsg.key, getSender());
 
         // Send InternalGetMsg to all nodes in the view
         // Incorrect! Only need to send to the N nodes that have the value!
@@ -108,7 +99,7 @@ public class Actor extends AbstractActor {
         }
 
         for (int i = 0; i < nodesForGet.size(); i++) {
-            nodesForGet.get(i).tell(new Actor.InternalGetMsg(getMsg.key, request_id), getSelf());
+            nodesForGet.get(i).tell(new Actor.InternalGetMsg(getMsg.key), getSelf());
         }
 
         // Send to the coordinator as well
@@ -121,7 +112,7 @@ public class Actor extends AbstractActor {
         getContext().getSystem().scheduler().scheduleOnce(
             scala.concurrent.duration.Duration.create(TIMEOUT_MS, "milliseconds"),
             getSelf(),
-            new Timeout(getMsg.key, request_id),
+            new Timeout(getMsg.key),
             getContext().getDispatcher(),
             ActorRef.noSender()
         );
@@ -130,7 +121,7 @@ public class Actor extends AbstractActor {
     // Handles an InternalGetMsg by replying with the local value after a random delay.
     private void handleInternalGet(InternalGetMsg msg) {
         if (values.containsKey(msg.key)) {
-            //System.out.println("Actor. " + getSelf() + " recevied message for key " + msg.key);
+            System.out.println("Actor. " + getSelf() + " recevied message for key " + msg.key);
             Pair<Integer, String> pair = values.get(msg.key);
             int delayMs = 100 + random.nextInt(2901); // Delay between 100ms and 3000ms
 
@@ -138,7 +129,7 @@ public class Actor extends AbstractActor {
             if(!msg.flag){
                 getContext().getSystem().scheduler().scheduleOnce(
                         scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
-                        () -> originalSender.tell(new Actor.ReceiveMsg(msg.key, pair.getLeft(), pair.getRight(), msg.request), getSelf()),
+                        () -> originalSender.tell(new Actor.ReceiveMsg(msg.key, pair.getLeft(), pair.getRight()), getSelf()),
                         getContext().getDispatcher()
                 );
             }
@@ -155,60 +146,36 @@ public class Actor extends AbstractActor {
 
     // Handles ReceiveMsg replies from nodes. If enough responses are received, selects the one with the highest version and returns it to the client.
     private void receiveResponses(ReceiveMsg msg) {
+        pendingReads.get(msg.key).add(Pair.of(msg.version, msg.value));
         //we divide the get into two modes
         //1. client request: the flag was never set, we proceed as asked to process the request from the client. In this case, we
         //wait for the quorum to be reached. When it is and the operation should proceed, we get the most up to date
         //version of the data and send it to the client, then we remove the elements from the Read map related to that key.
         if(!msg.flag){
-            pendingReads.get(msg.request).add(Pair.of(msg.version, msg.value));
-            if (pendingReads.get(msg.request).size() >= R) {
-                //if there is a request in the queue and the first one is the one we are serving, we process it
-                //This is to preserve the assumed FIFO-ness of the system
-                //Why is this needed? Because artificial delays could mess up with FIFO
-                if (!fifo.isEmpty() && fifo.get(0).equals(msg.request)) {
-                    Pair<Integer, String> best = pendingReads.get(msg.request).stream()
-                            .max(Comparator.comparingInt(Pair::getLeft))
-                            .orElse(null);
-                    if (best != null) {
-                        pendingClients.get(msg.request).tell(new SendMsg(best.getRight(), msg.key, best.getLeft()), getSelf());
-                        pendingClients.remove(msg.request);
-                        fifo.remove(msg.request);
-                    }
-                }
-                //if it is not the above case, then we check if the queue is empty. If it is, it is a reschedule message
-                //we can safely drop, as we already processed the request
-                else if (fifo.isEmpty()){
-                    //too late, scheduled message should be dropped
-                }
-                //else we schedule a retry a few milliseconds after to see if the state of the system changed
-                //and we can process the request
-                else {
-                    getContext().getSystem().scheduler().scheduleOnce(
-                            scala.concurrent.duration.Duration.create(50, "milliseconds"),
-                            getSelf(),
-                            msg,
-                            getContext().getDispatcher(),
-                            getSelf()
-                    );
+            if (pendingReads.get(msg.key).size() >= R && pendingReadOperations.contains(msg.key)) {
+                Pair<Integer, String> best = pendingReads.get(msg.key).stream()
+                        .max(Comparator.comparingInt(Pair::getLeft)) // choose highest version
+                        .orElse(null);
+
+                if (best != null) {
+                    pendingClients.get(msg.key).tell(new SendMsg(best.getRight(), msg.key, best.getLeft()), getSelf());
+                    pendingReadOperations.remove(msg.key);
                 }
             }
         }
         //2. join request: we need a different logic, so we wait to get N items for the key
         //and, when it happens, we send the values and remove
         //all the elements for the key.
-        //Note we don't need to preserve FIFO, as nodes join one at a time, thus the property is
-        //respected by the constraint itself
         else{
-            pendingInternalReads.get(msg.key).add(Pair.of(msg.version, msg.value));
-            //System.out.println(pendingInternalReads.get(msg.key).size() + " for " + msg.key);
-            if (pendingInternalReads.get(msg.key).size() == N) {
-                Pair<Integer, String> best = pendingInternalReads.get(msg.key).stream()
+            //System.out.println(pendingReads.get(msg.key).size() + " for " + msg.key);
+            if (pendingReads.get(msg.key).size() == N) {
+                Pair<Integer, String> best = pendingReads.get(msg.key).stream()
                         .max(Comparator.comparingInt(Pair::getLeft)) // choose highest version
                         .orElse(null);
 
                 if (best != null) {
                     getSelf().tell(new SendMsg(best.getRight(), msg.key, best.getLeft(), true), getSelf());
-                    pendingInternalReads.remove(msg.key);
+                    pendingReads.remove(msg.key);
                 }
             }
         }
@@ -216,13 +183,15 @@ public class Actor extends AbstractActor {
 
 
     private void updateValue(UpdateMsg updateMsg){
+        //a process can issue multiple reads and writes even on the same key, thus this part
+        //is not necessary
+        //if (pendingReadOperations.contains(updateMsg.key)) {
+        //    return;
+        //}
 
-        clock = clock + 1;
-        String request_id = updateMsg.key + "id" + this.id + "c" + clock;
-
-        pendingReads.put(request_id, new ArrayList<>());
-        pendingClients.put(request_id, getSender());
-        fifo.add(request_id);
+        pendingReadOperations.add(updateMsg.key);
+        pendingReads.put(updateMsg.key, new ArrayList<>());
+        pendingClients.put(updateMsg.key, getSender());
 
         //we create a list of nodes that we need to send the message to
         final ArrayList<ActorRef> nodesForGet = new ArrayList<>();
@@ -244,14 +213,14 @@ public class Actor extends AbstractActor {
         }
 
         for (int i = 0; i < nodesForGet.size(); i++) {
-            nodesForGet.get(i).tell(new Actor.InternalUpdateMsg(updateMsg.key, updateMsg.value, nodesForGet, request_id), getSelf());
+            nodesForGet.get(i).tell(new Actor.InternalUpdateMsg(updateMsg.key, updateMsg.value, nodesForGet), getSelf());
         }
 
         // Schedule a timeout in case not enough responses arrive in time
         getContext().getSystem().scheduler().scheduleOnce(
                 scala.concurrent.duration.Duration.create(TIMEOUT_MS, "milliseconds"),
                 getSelf(),
-                new TimeoutW(updateMsg.key, updateMsg.value, request_id),
+                new TimeoutW(updateMsg.key, updateMsg.value),
                 getContext().getDispatcher(),
                 ActorRef.noSender()
         );
@@ -267,7 +236,7 @@ public class Actor extends AbstractActor {
 
             getContext().getSystem().scheduler().scheduleOnce(
                     scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
-                    () -> originalSender.tell(new Actor.ReceiveUpdMsg(msg.key, pair.getLeft(), pair.getRight(), msg.value_to_update, msg.nodes, msg.request), getSelf()),
+                    () -> originalSender.tell(new Actor.ReceiveUpdMsg(msg.key, pair.getLeft(), pair.getRight(), msg.value_to_update, msg.nodes), getSelf()),
                     getContext().getDispatcher()
             );
         }
@@ -277,52 +246,30 @@ public class Actor extends AbstractActor {
     // message to the client and then it starts the updating process by updating the version
     // number and then pair it up with the new value and sends it
     private void handleUpdate(ReceiveUpdMsg msg) {
-        //we get the received value and stored with the others we have received for the
-        //message request
-        pendingReads.get(msg.request).add(Pair.of(msg.version, msg.value));
+        pendingReads.get(msg.key).add(Pair.of(msg.version, msg.value));
 
-        if (pendingReads.get(msg.request).size() >= W) {
-            //if there is a request in the queue and the first one is the one we are serving, we process it
-            //This is to preserve the assumed FIFO-ness of the system
-            //Why is this needed? Because artificial delays could mess up with FIFO
-            if(!fifo.isEmpty() && fifo.get(0).equals(msg.request)){
-                Pair<Integer, String> best = pendingReads.get(msg.request).stream()
-                        .max(Comparator.comparingInt(Pair::getLeft)) // choose highest version
-                        .orElse(null);
+        if (pendingReads.get(msg.key).size() >= W && pendingReadOperations.contains(msg.key)) {
+            Pair<Integer, String> best = pendingReads.get(msg.key).stream()
+                    .max(Comparator.comparingInt(Pair::getLeft)) // choose highest version
+                    .orElse(null);
 
-                if (best != null) {
-                    pendingClients.get(msg.request).tell(new SendMsg("Successful insertion of value " + msg.value_to_update + " into node of key " + String.valueOf(msg.key) + "\n"), getSelf());
-                    int versionUpdate = best.getLeft();
-                    versionUpdate = versionUpdate + 1;
-                    for (int i=0; i<msg.nodes.size(); i++){
-                        msg.nodes.get(i).tell(new Actor.NewUpdate(msg.key, versionUpdate, msg.value_to_update), getSelf());
-                    }
-                    pendingClients.remove(msg.request);
-                    fifo.remove(msg.request);
+            if (best != null) {
+                pendingClients.get(msg.key).tell(new SendMsg("Successful insertion of value " + msg.value_to_update + " into node of key " + String.valueOf(msg.key) + "\n"), getSelf());
+                int versionUpdate = best.getLeft();
+                versionUpdate = versionUpdate + 1;
+                for (int i=0; i<msg.nodes.size(); i++){
+                    msg.nodes.get(i).tell(new Actor.NewUpdate(msg.key, versionUpdate, msg.value_to_update), getSelf());
                 }
+                pendingReadOperations.remove(msg.key);
             }
-            //if it is not the above case, then we check if the queue is empty. If it is, it is a reschedule message
-            //we can safely drop, as we already processed the request
-            else if(fifo.isEmpty()){
-                //message is unnecessary, should be dropped
-            }
-            //else we schedule a retry a few milliseconds after to see if the state of the system changed
-            //and we can process the request
-            else {
-            getContext().getSystem().scheduler().scheduleOnce(
-                    scala.concurrent.duration.Duration.create(20, "milliseconds"),
-                    getSelf(),
-                    msg,
-                    getContext().getDispatcher(),
-                    getSelf()
-            );
-        }
         }
     }
 
     private void writeUpdate(NewUpdate msg){
         //we update the value stored by the node
-        values.put(msg.key, Pair.of(msg.version, msg.value));
+        if(values.containsKey(msg.key)){
+            values.put(msg.key, Pair.of(msg.version, msg.value));
+        }
     }
 
     private void onJoinMessage(JoinMsg msg){
@@ -462,9 +409,9 @@ public class Actor extends AbstractActor {
         //we set the value obtained by the neighbour node
         this.values = msg.values;
         for(Integer j: values.keySet()){
-            //we add each element to the pendingInternalReads - this is done so to prevent the join
+            //we add each element to the pendingReads - this is done so to prevent the join
             //process to end when it shouldn't
-            pendingInternalReads.put(j, new ArrayList<>());
+            pendingReads.put(j, new ArrayList<>());
         }
         //for each value contained there, we perform a read to get the most up to date value
         for(Integer j: values.keySet()){
@@ -504,7 +451,7 @@ public class Actor extends AbstractActor {
         //pendingReads is empty. If it is, then we can announce our presence to the network.
         //If it isn't, then it means we still need to update some values, so we do nothing.
         if(msg.flag){
-            if(pendingInternalReads.isEmpty()){
+            if(pendingReads.isEmpty()){
                 for(int i =0; i<currentView.size(); i++){
                     currentView.get(i).tell(new JoinMsg(this.id, true), getSelf());
                 }
@@ -531,19 +478,17 @@ public class Actor extends AbstractActor {
 
     // Called when timeout occurs for a pending read. If quorum was not reached, responds to the client with null.
     private void onTimeoutRead(Timeout timeout) {
-        if (pendingReads.get(timeout.request).size() < R) {
-            pendingClients.get(timeout.request).tell(new SendMsg("Read of value failed"), getSelf());
-            pendingReads.get(timeout.request).clear();
-            fifo.remove(timeout.request);
+        if (pendingReads.get(timeout.key).size() < R && pendingReadOperations.contains(timeout.key)) {
+            pendingClients.get(timeout.key).tell(new SendMsg("Read of value failed"), getSelf());
+            pendingReads.get(timeout.key).clear();
         }
     }
 
     // Called when timeout occurs for a pending write. If quorum was not reached, responds to the client with null.
     private void onTimeoutWrite(TimeoutW timeout) {
-        if (pendingReads.get(timeout.request).size() < R) {
-            pendingClients.get(timeout.request).tell(new SendMsg("Write of value " + timeout.value + " failed"), getSelf());
-            pendingReads.get(timeout.request).clear();
-            fifo.remove(timeout.request);
+        if (pendingReads.get(timeout.key).size() < R && pendingReadOperations.contains(timeout.key)) {
+            pendingClients.get(timeout.key).tell(new SendMsg("Write of value " + timeout.value + " failed"), getSelf());
+            pendingReads.get(timeout.key).clear();
         }
     }
 
@@ -562,24 +507,80 @@ public class Actor extends AbstractActor {
         this.id_ref_association.putAll(msg.map);
     }
 
+    private void onLeaveMsg(LeaveMsg msg) {
+        if (msg.leavingNode.equals(getSelf())){
+            // Notify all other nodes
+            System.out.println("Initiating leave for node " + this.id);
+            for (ActorRef node : currentView) {
+                if (!node.equals(getSelf())) {
+                    node.tell(new LeaveMsg(this.id, getSelf()), getSelf());
+                }
+            }
+
+            // For each value, find new responsible nodes and update data
+            currentView.remove(getSelf());
+            for (Map.Entry<Integer, Pair<Integer, String>> entry : values.entrySet()) {
+                List<ActorRef> newResponsibleNodes = findResponsibleNodes(entry.getKey(), currentView);
+                for (ActorRef node : newResponsibleNodes) {
+                    node.tell(new TransferDataMsg(entry.getKey(), entry.getValue()), getSelf());
+                }
+            }
+
+            // Contact clients
+            for (ActorRef client : clients) {
+                client.tell(new UpdateClientView(getSelf(),true), getSelf());
+            }
+        }
+        else {
+            // Remove the leaving node from the view and id_ref_association
+            currentView.remove(msg.leavingNode);
+            id_ref_association.remove(msg.leavingNode);
+        }
+    }
+
+    // Helper method to find responsible nodes
+    private List<ActorRef> findResponsibleNodes(int key, List<ActorRef> view) {
+        List<ActorRef> responsible = new ArrayList<>();
+        // Add the nodes that are responsible for the key to the list
+        for (int i = 0; i < view.size(); i++) {
+            if (id_ref_association.get(view.get(i)) >= key && responsible.size() < N) {
+                responsible.add(view.get(i));
+            }
+        }
+        // If the list is not of size N because the key is greater than the last node, add the first N - responsible.size() nodes to the list
+        if (responsible.size() != N) {
+            int temp = responsible.size();
+            for (int i = 0; i < N - temp; i++) {
+                responsible.add(view.get(i));
+            }
+        }
+        return responsible;
+    }
+
+    private void onTransferDataMsg(TransferDataMsg msg) {
+        // Add the data to values
+        values.put(msg.key, msg.value);
+    }
+
+    private void SetClientsView(SetClientsView msg) {
+        // Set the client view
+        this.clients.addAll(msg.clients);
+    }
+
     // ---- Message classes below ----
 
     public static class Timeout implements Serializable {
         public final int key;
-        public String request;
-        public Timeout(int key, String request) {
+        public Timeout(int key) {
             this.key = key;
-            this.request = request;
         }
-
     }
 
     public static class TimeoutW implements Serializable {
         public final int key;
         public final String value;
-        public String request;
-        public TimeoutW(int key, String value, String request) {
-            this.key = key; this.value = value; this.request = request;
+        public TimeoutW(int key, String value) {
+            this.key = key; this.value = value;
         }
     }
 
@@ -662,11 +663,9 @@ public class Actor extends AbstractActor {
     public static class InternalGetMsg implements Serializable {
         public final int key;
         public boolean flag; //used to manage internal reads for join
-        public String request;
-        public InternalGetMsg(int key, String request) {
+        public InternalGetMsg(int key) {
             this.key = key;
             this.flag = false;
-            this.request = request;
         }
         public InternalGetMsg(int key, boolean flag) {
             this.key = key;
@@ -678,12 +677,10 @@ public class Actor extends AbstractActor {
         public final int key;
         public final String value_to_update;
         public final ArrayList<ActorRef> nodes;
-        public String request;
-        public InternalUpdateMsg(int key, String value_to_update, ArrayList<ActorRef> nodes, String request) {
+        public InternalUpdateMsg(int key, String value_to_update, ArrayList<ActorRef> nodes) {
             this.key = key;
             this.value_to_update = value_to_update;
             this.nodes = nodes;
-            this.request = request;
         }
     }
 
@@ -692,13 +689,11 @@ public class Actor extends AbstractActor {
         public int version;
         public String value;
         public boolean flag; //used for the internal read of the join operation
-        public String request;
-        public ReceiveMsg(int key, int version, String value, String request) {
+        public ReceiveMsg(int key, int version, String value) {
             this.key = key;
             this.version = version;
             this.value = value;
             this.flag = false;
-            this.request = request;
         }
         public ReceiveMsg(int key, int version, String value, boolean flag) {
             this.key = key;
@@ -728,14 +723,12 @@ public class Actor extends AbstractActor {
         public String value;
         public String value_to_update;
         public ArrayList<ActorRef> nodes;
-        public String request;
-        public ReceiveUpdMsg(int key, int version, String value, String value_to_update, ArrayList<ActorRef> nodes, String request) {
+        public ReceiveUpdMsg(int key, int version, String value, String value_to_update, ArrayList<ActorRef> nodes) {
             this.key = key;
             this.version = version;
             this.value = value;
             this.value_to_update = value_to_update;
             this.nodes = nodes;
-            this.request = request;
         }
     }
 
@@ -751,6 +744,30 @@ public class Actor extends AbstractActor {
         }
     }
 
+    public static class LeaveMsg implements Serializable {
+        public final int id;
+        public final ActorRef leavingNode;
+        public LeaveMsg(int id, ActorRef leavingNode) {
+            this.id = id;
+            this.leavingNode = leavingNode;
+        }
+    }
+
+    public static class TransferDataMsg implements Serializable {
+        public final int key;
+        public final Pair<Integer, String> value;
+        public TransferDataMsg(int key, Pair<Integer, String> value) {
+            this.key = key;
+            this.value = value;
+        }
+    }
+
+    public static class SetClientsView implements Serializable {
+        public final ArrayList<ActorRef> clients;
+        public SetClientsView(ArrayList<ActorRef> clients) {
+            this.clients = clients;
+        }
+    }
 
     @Override
     public Receive createReceive() {
@@ -773,6 +790,9 @@ public class Actor extends AbstractActor {
                 .match(RequestValues.class, this::provideValues)
                 .match(SendValues.class, this::setValuesAndRead)
                 .match(SendMsg.class, this::internalSetValue)
+                .match(LeaveMsg.class, this::onLeaveMsg)
+                .match(TransferDataMsg.class, this::onTransferDataMsg)
+                .match(SetClientsView.class, this::SetClientsView)
                 .build();
     }
 }
