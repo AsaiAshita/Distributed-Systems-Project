@@ -29,7 +29,6 @@ public class Client extends AbstractActor {
     private void forwardGetMsg(GetMsg msg) {
         ActorRef coordinator = getCoordinator();
         if (coordinator != null) {
-            System.out.println("Coordinator. " + coordinator);
             coordinator.tell(msg, getSelf());
         } else {
             System.out.println("No coordinator available for GetMsg.");
@@ -48,17 +47,20 @@ public class Client extends AbstractActor {
 
     // Print the received value to the console
     private void receiveMsg(SendMsg msg) {
-        System.out.println(msg.value);
+        System.out.println(getSelf() + " received " + msg.value);
     }
 
     // Update the view
     private void updateView(UpdateClientView msg) {
         if (msg.isLeaving) {
             this.currentView.remove(msg.node);
+            //System.out.println("Did it for node" + msg.node + " and for client " + getSelf());
         } else {
             this.currentView.add(msg.node);
+            //System.out.println("Did it for node" + msg.node + " and for client " + getSelf());
         }
     }
+
 
     // Message for requesting a value
     public static class GetMsg implements Serializable {
@@ -87,6 +89,7 @@ public class Client extends AbstractActor {
             this.isLeaving = isLeaving;
         }
     }
+
 
     @Override
     public Receive createReceive() {
