@@ -44,7 +44,7 @@ public class Main {
     for(int j = 0; j<5; j++){
       ActorRef node = system.actorOf(
               Actor.props(initial_values[j]),    // actor class
-              "node_" + j     // the new actor name (unique within the system)
+              "node_" + initial_values[j]     // the new actor name (unique within the system)
       );
       nodes.add(node);
       id_ref_association.put(node, initial_values[j]);
@@ -78,7 +78,7 @@ public class Main {
     valuesNode2.put(24, Pair.of(2, "val24"));
     valuesNode2.put(29, Pair.of(1, "val29"));
 
-
+    
     Map<Integer, Pair<Integer, String>> valuesNode3 = new HashMap<>();
     valuesNode3.put(11, Pair.of(1, "val11"));
     valuesNode3.put(24, Pair.of(1, "val24"));
@@ -90,8 +90,6 @@ public class Main {
     valuesNode4.put(29, Pair.of(1, "val29"));
     valuesNode4.put(45, Pair.of(1, "val45"));
 
-
-
     ArrayList<Map<Integer, Pair<Integer, String>>> allValues = new ArrayList<>();
     allValues.add(valuesNode0);
     allValues.add(valuesNode1);
@@ -99,19 +97,25 @@ public class Main {
     allValues.add(valuesNode3);
     allValues.add(valuesNode4);
 
+    // Create clients
+    ArrayList<ActorRef> clients = new ArrayList<>();
+    ActorRef client0 = system.actorOf(Client.props(0, nodes), "client_0");
+    ActorRef client1 = system.actorOf(Client.props(1, nodes), "client_1");
+    ActorRef client2 = system.actorOf(Client.props(2, nodes), "client_2");
+    ActorRef client3 = system.actorOf(Client.props(3, nodes), "client_3");
+    clients.add(client0);
+    clients.add(client1);
+    clients.add(client2);
+    clients.add(client3);
+
     // Update the actors view and values stored
     for (int i = 0; i < nodes.size(); i++) {
         ActorRef node = nodes.get(i);
         node.tell(new Actor.UpdateView(nodes), ActorRef.noSender());
         node.tell(new Actor.SetValues(allValues.get(i)), ActorRef.noSender());
         node.tell(new Actor.SetIdAssociation(id_ref_association), ActorRef.noSender());
+        node.tell(new Actor.SetClientsView(clients), ActorRef.noSender());
     }
-
-    // Create a client
-    ActorRef client0 = system.actorOf(Client.props(0,nodes), "client_0");
-    ActorRef client1 = system.actorOf(Client.props(1,nodes), "client_1");
-    ActorRef client2 = system.actorOf(Client.props(2,nodes), "client_2");
-    ActorRef client3 = system.actorOf(Client.props(3,nodes), "client_3");
 
     //Simulation to test the Join
     /*
@@ -159,6 +163,14 @@ public class Main {
 
     client0.tell(new Client.GetMsg(24), client0);
     */
+
+    // Simulate leave operation
+    client0.tell(new Client.GetMsg(4), client0);
+    TimeUnit.SECONDS.sleep(3);
+    nodes.get(1).tell(new Actor.LeaveMsg(1, nodes.get(1)), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(3);
+    client0.tell(new Client.GetMsg(4), client0);
+    TimeUnit.SECONDS.sleep(3);
 
     //the following is a remnant of the lab files I took inspiration from for the basis of the project
     System.out.println(">>> Press ENTER to exit <<<");

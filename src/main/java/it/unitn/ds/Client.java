@@ -29,6 +29,7 @@ public class Client extends AbstractActor {
     private void forwardGetMsg(GetMsg msg) {
         ActorRef coordinator = getCoordinator();
         if (coordinator != null) {
+            System.out.println("Coordinator. " + coordinator);
             coordinator.tell(msg, getSelf());
         } else {
             System.out.println("No coordinator available for GetMsg.");
@@ -50,6 +51,15 @@ public class Client extends AbstractActor {
         System.out.println(msg.value);
     }
 
+    // Update the view
+    private void updateView(UpdateClientView msg) {
+        if (msg.isLeaving) {
+            this.currentView.remove(msg.node);
+        } else {
+            this.currentView.add(msg.node);
+        }
+    }
+
     // Message for requesting a value
     public static class GetMsg implements Serializable {
         public final int key;
@@ -68,12 +78,23 @@ public class Client extends AbstractActor {
         }
     }
 
+    // Message for updating the view
+    public static class UpdateClientView implements Serializable {
+        public final ActorRef node;
+        public final boolean isLeaving;
+        public UpdateClientView(ActorRef node, boolean isLeaving) {
+            this.node = node;
+            this.isLeaving = isLeaving;
+        }
+    }
+
     @Override
     public Receive createReceive() {
         return receiveBuilder()
                 .match(GetMsg.class, this::forwardGetMsg)
                 .match(UpdateMsg.class, this::forwardUpdateMsg)
                 .match(SendMsg.class, this::receiveMsg)
+                .match(UpdateClientView.class, this::updateView)
                 .build();
     }
 

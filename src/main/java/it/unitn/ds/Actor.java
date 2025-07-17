@@ -10,6 +10,7 @@ import org.apache.commons.lang3.tuple.Pair;
 
 import it.unitn.ds.Client.GetMsg;
 import it.unitn.ds.Client.UpdateMsg;
+import it.unitn.ds.Client.UpdateClientView;
 
 public class Actor extends AbstractActor {
 
@@ -47,6 +48,8 @@ public class Actor extends AbstractActor {
 
     // Keeps track of which keys currently have a pending read operation
     private Set<Integer> pendingReadOperations;
+
+    private ArrayList<ActorRef> clients = new ArrayList<>();
 
     public Actor(int id) {
         this.id = id;
@@ -118,7 +121,7 @@ public class Actor extends AbstractActor {
     // Handles an InternalGetMsg by replying with the local value after a random delay.
     private void handleInternalGet(InternalGetMsg msg) {
         if (values.containsKey(msg.key)) {
-            //System.out.println("Actor. " + getSelf() + " recevied message for key " + msg.key);
+            System.out.println("Actor. " + getSelf() + " recevied message for key " + msg.key);
             Pair<Integer, String> pair = values.get(msg.key);
             int delayMs = 100 + random.nextInt(2901); // Delay between 100ms and 3000ms
 
@@ -504,6 +507,66 @@ public class Actor extends AbstractActor {
         this.id_ref_association.putAll(msg.map);
     }
 
+    private void onLeaveMsg(LeaveMsg msg) {
+        if (msg.leavingNode.equals(getSelf())){
+            // Notify all other nodes
+            System.out.println("Initiating leave for node " + this.id);
+            for (ActorRef node : currentView) {
+                if (!node.equals(getSelf())) {
+                    node.tell(new LeaveMsg(this.id, getSelf()), getSelf());
+                }
+            }
+
+            // For each value, find new responsible nodes and update data
+            currentView.remove(getSelf());
+            for (Map.Entry<Integer, Pair<Integer, String>> entry : values.entrySet()) {
+                List<ActorRef> newResponsibleNodes = findResponsibleNodes(entry.getKey(), currentView);
+                for (ActorRef node : newResponsibleNodes) {
+                    node.tell(new TransferDataMsg(entry.getKey(), entry.getValue()), getSelf());
+                }
+            }
+
+            // Contact clients
+            for (ActorRef client : clients) {
+                client.tell(new UpdateClientView(getSelf(),true), getSelf());
+            }
+        }
+        else {
+            // Remove the leaving node from the view and id_ref_association
+            currentView.remove(msg.leavingNode);
+            id_ref_association.remove(msg.leavingNode);
+        }
+    }
+
+    // Helper method to find responsible nodes
+    private List<ActorRef> findResponsibleNodes(int key, List<ActorRef> view) {
+        List<ActorRef> responsible = new ArrayList<>();
+        // Add the nodes that are responsible for the key to the list
+        for (int i = 0; i < view.size(); i++) {
+            if (id_ref_association.get(view.get(i)) >= key && responsible.size() < N) {
+                responsible.add(view.get(i));
+            }
+        }
+        // If the list is not of size N because the key is greater than the last node, add the first N - responsible.size() nodes to the list
+        if (responsible.size() != N) {
+            int temp = responsible.size();
+            for (int i = 0; i < N - temp; i++) {
+                responsible.add(view.get(i));
+            }
+        }
+        return responsible;
+    }
+
+    private void onTransferDataMsg(TransferDataMsg msg) {
+        // Add the data to values
+        values.put(msg.key, msg.value);
+    }
+
+    private void SetClientsView(SetClientsView msg) {
+        // Set the client view
+        this.clients.addAll(msg.clients);
+    }
+
     // ---- Message classes below ----
 
     public static class Timeout implements Serializable {
@@ -681,6 +744,30 @@ public class Actor extends AbstractActor {
         }
     }
 
+    public static class LeaveMsg implements Serializable {
+        public final int id;
+        public final ActorRef leavingNode;
+        public LeaveMsg(int id, ActorRef leavingNode) {
+            this.id = id;
+            this.leavingNode = leavingNode;
+        }
+    }
+
+    public static class TransferDataMsg implements Serializable {
+        public final int key;
+        public final Pair<Integer, String> value;
+        public TransferDataMsg(int key, Pair<Integer, String> value) {
+            this.key = key;
+            this.value = value;
+        }
+    }
+
+    public static class SetClientsView implements Serializable {
+        public final ArrayList<ActorRef> clients;
+        public SetClientsView(ArrayList<ActorRef> clients) {
+            this.clients = clients;
+        }
+    }
 
     @Override
     public Receive createReceive() {
@@ -703,6 +790,9 @@ public class Actor extends AbstractActor {
                 .match(RequestValues.class, this::provideValues)
                 .match(SendValues.class, this::setValuesAndRead)
                 .match(SendMsg.class, this::internalSetValue)
+                .match(LeaveMsg.class, this::onLeaveMsg)
+                .match(TransferDataMsg.class, this::onTransferDataMsg)
+                .match(SetClientsView.class, this::SetClientsView)
                 .build();
     }
 }
