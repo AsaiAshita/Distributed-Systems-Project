@@ -21,13 +21,14 @@ public class Actor extends AbstractActor {
     private int clock = 0;
 
     // Number of nodes storing the replica
-    private static final int N = 3;
+    // Fattore di replica configurabile
+    private static final int N = Config.N;
 
     // Read quorum - we generalize it to N/2 + 1, as we need W + R > N
-    private static final int R = N/2 + 1;
+    private static final int R = Config.R;
 
     // Write quorum - we generalize it to N/2 + 1, as we need W > N/2 and W + R > N
-    private static final int W = N/2 + 1;
+    private static final int W = Config.W;
 
     // List of other nodes in the system (excluding self)
     private ArrayList<ActorRef> currentView;
@@ -51,14 +52,14 @@ public class Actor extends AbstractActor {
     private final Random random = new Random();
 
     // Timeout duration for quorum wait
-    private static final int TIMEOUT_MS = 2500;
+    private static final int TIMEOUT_MS = Config.TIMEOUT_MS;
 
     //Set containing all the requests - used to preserve FIFO assumption
     //This is due to random delays possibly breaking it
     private ArrayList<String> fifo = new ArrayList<>();
 
+    // List of clients
     private ArrayList<ActorRef> clients = new ArrayList<>();
-
 
     public Actor(int id) {
         this.id = id;
@@ -219,7 +220,6 @@ public class Actor extends AbstractActor {
 
 
     private void updateValue(UpdateMsg updateMsg){
-
         clock = clock + 1;
         String request_id = updateMsg.key + "id" + this.id + "c" + clock;
 
@@ -426,8 +426,8 @@ public class Actor extends AbstractActor {
     }
 
     private void onRequestView(RequestView msg){
-        //we reply with the current view of the queried node
-        msg.actorRef.tell(new ImplementView(this.currentView, this.id_ref_association, this.clients), getSelf());
+        //It replies with the current view of the node
+        msg.actorRef.tell(new ImplementView(this.currentView, this.id_ref_association, this.clients), getSelf());       
     }
 
     private void onImplementView(ImplementView msg){
@@ -442,7 +442,7 @@ public class Actor extends AbstractActor {
         ArrayList<ActorRef> nodes_to_contact = new ArrayList<>();
         int temp = 0;
         while(nodes_to_contact.size() != 1 && temp < currentView.size()){
-            if (id_ref_association.get(currentView.get(temp)) >= this.id){
+            if (id_ref_association.get(currentView.get(temp)) > this.id){
                 nodes_to_contact.add(currentView.get(temp));
             }
             temp = temp + 1;
@@ -630,6 +630,19 @@ public class Actor extends AbstractActor {
     private void SetClientsView(SetClientsView msg) {
         // Set the client view
         this.clients.addAll(msg.clients);
+    }
+
+    private void printValues(PrintValues msg) {
+        System.out.println("Values in node " + this.id + ":");
+        for (Map.Entry<Integer, Pair<Integer, String>> entry : values.entrySet()) {
+            System.out.println("Key: " + entry.getKey() + " -> Version: " + entry.getValue().getLeft() + ", Value: " + entry.getValue().getRight());
+        }
+    }
+
+    private void onRecoveryMsg(RecoveryMsg msg) {
+        System.out.println("Node " + this.id + " recovered");
+        getContext().become(active());
+        msg.helperNode.tell(new JoinMsg(this.id, true), getSelf());
     }
 
     // ---- Message classes below ----
@@ -848,31 +861,64 @@ public class Actor extends AbstractActor {
         }
     }
 
+    public static class CrashMsg implements Serializable {
+        public final boolean isCrashed;
+        public CrashMsg(boolean isCrashed) {
+            this.isCrashed = isCrashed;
+        }
+    }
+
+    public static class RecoveryMsg implements Serializable {
+        public final ActorRef helperNode;
+        public RecoveryMsg(ActorRef helperNode) {
+            this.helperNode = helperNode;
+        }
+    }
+
+    public static class PrintValues implements Serializable {}
 
     @Override
     public Receive createReceive() {
+        return active();
+    }
+
+    private Receive active() {
         return receiveBuilder()
-                .match(GetMsg.class, this::getValue)
-                .match(UpdateMsg.class, this::updateValue)
-                .match(UpdateView.class, this::updateView)
-                .match(SetValues.class, this::setValues)
-                .match(InternalGetMsg.class, this::handleInternalGet)
-                .match(ReceiveMsg.class, this::receiveResponses)
-                .match(Timeout.class, this::onTimeoutRead)
-                .match(TimeoutW.class, this::onTimeoutWrite)
-                .match(InternalUpdateMsg.class, this::handleInternalUpdateGet)
-                .match(ReceiveUpdMsg.class, this::handleUpdate)
-                .match(SetIdAssociation.class, this::setIdAssociation)
-                .match(NewUpdate.class, this::writeUpdate)
-                .match(JoinMsg.class, this::onJoinMessage)
-                .match(RequestView.class, this::onRequestView)
-                .match(ImplementView.class, this::onImplementView)
-                .match(RequestValues.class, this::provideValues)
-                .match(SendValues.class, this::setValuesAndRead)
-                .match(SendMsg.class, this::internalSetValue)
-                .match(LeaveMsg.class, this::onLeaveMsg)
-                .match(TransferDataMsg.class, this::onTransferDataMsg)
-                .match(SetClientsView.class, this::SetClientsView)
-                .build();
+            .match(GetMsg.class, this::getValue)
+            .match(UpdateMsg.class, this::updateValue)
+            .match(UpdateView.class, this::updateView)
+            .match(SetValues.class, this::setValues)
+            .match(InternalGetMsg.class, this::handleInternalGet)
+            .match(ReceiveMsg.class, this::receiveResponses)
+            .match(Timeout.class, this::onTimeoutRead)
+            .match(TimeoutW.class, this::onTimeoutWrite)
+            .match(InternalUpdateMsg.class, this::handleInternalUpdateGet)
+            .match(ReceiveUpdMsg.class, this::handleUpdate)
+            .match(SetIdAssociation.class, this::setIdAssociation)
+            .match(NewUpdate.class, this::writeUpdate)
+            .match(JoinMsg.class, this::onJoinMessage)
+            .match(RequestView.class, this::onRequestView)
+            .match(ImplementView.class, this::onImplementView)
+            .match(RequestValues.class, this::provideValues)
+            .match(SendValues.class, this::setValuesAndRead)
+            .match(SendMsg.class, this::internalSetValue)
+            .match(LeaveMsg.class, this::onLeaveMsg)
+            .match(TransferDataMsg.class, this::onTransferDataMsg)
+            .match(SetClientsView.class, this::SetClientsView)
+            .match(CrashMsg.class, msg -> {
+                getContext().become(crashed());
+            })
+            .match(PrintValues.class, this::printValues)
+            .build();
+    }
+
+    private Receive crashed() {
+        return receiveBuilder()
+            .match(RecoveryMsg.class, this::onRecoveryMsg)
+            .match(PrintValues.class, this::printValues)
+            .matchAny(msg -> {
+                System.out.println("Node " + this.id + " is crashed. Ignoring: " + msg.getClass().getSimpleName());
+            })
+            .build();
     }
 }

@@ -2,6 +2,7 @@ package it.unitn.ds;
 
 import java.io.IOException;
 import akka.actor.ActorRef;
+import akka.actor.ActorRefFactory;
 import akka.actor.ActorSystem;
 
 import java.util.*;
@@ -11,7 +12,6 @@ import org.apache.commons.lang3.tuple.Pair;
 
  
 public class Main {
-  //final static int N_SENDERS = 5;
 
   public static Map<ActorRef, Integer> sortByValue(Map<ActorRef, Integer> map) {
     // Convert map entries to a list
@@ -40,6 +40,7 @@ public class Main {
     //initial values we will give to the starting set of nodes
     int [] initial_values = {10,20,30,40,50};
 
+    Config.init();
 
     //create all initial actors
     for(int j = 0; j<5; j++){
@@ -75,7 +76,7 @@ public class Main {
     Map<Integer, Pair<Integer, String>> valuesNode2 = new HashMap<>();
     valuesNode2.put(4, Pair.of(1, "val4"));
     valuesNode2.put(9, Pair.of(1, "val9"));
-    valuesNode2.put(11, Pair.of(1, "val11"));
+    valuesNode2.put(11, Pair.of(2, "val11"));
     valuesNode2.put(24, Pair.of(2, "val24"));
     valuesNode2.put(29, Pair.of(1, "val29"));
 
@@ -120,10 +121,48 @@ public class Main {
         node.tell(new Actor.SetClientsView(clients), ActorRef.noSender());
     }
 
-
-
+    
+    nodes.get(0).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(2);
+    nodes.get(1).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(2);
+    nodes.get(2).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(2);
+    nodes.get(3).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(2);
+    nodes.get(4).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(3);
+    nodes.get(1).tell(new Actor.CrashMsg(true), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(3);
+    client0.tell(new Client.GetMsg(4), client0);
+    
+    TimeUnit.SECONDS.sleep(4);
+    ActorRef node = system.actorOf(
+            Actor.props(23),    
+            "node_23" 
+    );
+    node.tell(new Actor.JoinMsg(23, nodes.get(4)), ActorRef.noSender());
+    nodes.add(2,node);
+    
+    TimeUnit.SECONDS.sleep(5);
+    nodes.get(1).tell(new Actor.RecoveryMsg(nodes.get(0)), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(3);
+    client0.tell(new Client.GetMsg(4), client0);
+    TimeUnit.SECONDS.sleep(3);
+    nodes.get(0).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(2);
+    nodes.get(1).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(2);
+    nodes.get(2).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(2);
+    nodes.get(3).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(2);
+    nodes.get(4).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(2);
+    nodes.get(5).tell(new Actor.PrintValues(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(2);
     //Simulation to test the Join
-
+    /*
     ActorRef node = system.actorOf(
             Actor.props(23),    // actor class
             "node_23"     // the new actor name (unique within the system)
@@ -131,7 +170,7 @@ public class Main {
 
     node.tell(new Actor.JoinMsg(23, nodes.get(2)), ActorRef.noSender());
 
-    TimeUnit.SECONDS.sleep(20);
+    TimeUnit.SECONDS.sleep(10);
 
     nodes.add(node);
     node = system.actorOf(
@@ -140,7 +179,7 @@ public class Main {
     );
 
     node.tell(new Actor.JoinMsg(48, nodes.get(0)), ActorRef.noSender());
-
+    */
     // Simulate leave operation
     /*
     client0.tell(new Client.GetMsg(4), client0);
