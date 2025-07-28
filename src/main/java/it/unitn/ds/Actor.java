@@ -5,7 +5,6 @@ import akka.actor.*;
 import java.io.Serializable;
 import java.util.*;
 
-import akka.routing.ActorRefRoutee;
 import org.apache.commons.lang3.tuple.Pair;
 
 import it.unitn.ds.Client.GetMsg;
@@ -33,6 +32,8 @@ public class Actor extends AbstractActor {
     // List of other nodes in the system (excluding self)
     private ArrayList<ActorRef> currentView;
 
+    private Cancellable joinTimeout = null;
+
     // Local key-value store: key -> (version, value)
     private Map<Integer, Pair<Integer,String>> values;
 
@@ -53,6 +54,11 @@ public class Actor extends AbstractActor {
 
     // Timeout duration for quorum wait
     private static final int TIMEOUT_MS = Config.TIMEOUT_MS;
+
+    //timeout used for the join, in case one of the nodes has crashed
+    //set high enough to not interfere with the normal operations, as a
+    //normal join should never have this problem
+    private static final int TIMEOUT_JOIN = 3000;
 
     //Set containing all the requests - used to preserve FIFO assumption
     //This is due to random delays possibly breaking it
@@ -136,7 +142,7 @@ public class Actor extends AbstractActor {
         if (values.containsKey(msg.key)) {
             //System.out.println("Actor. " + getSelf() + " recevied message for key " + msg.key);
             Pair<Integer, String> pair = values.get(msg.key);
-            int delayMs = 100 + random.nextInt(2901); // Delay between 100ms and 3000ms
+            int delayMs = 100 + random.nextInt(200); // Delay between 100ms and 3000ms
 
             ActorRef originalSender = getSender();
             if(!msg.flag){
@@ -204,7 +210,7 @@ public class Actor extends AbstractActor {
         //respected by the constraint itself
         else{
             pendingInternalReads.get(msg.key).add(Pair.of(msg.version, msg.value));
-            //System.out.println(pendingInternalReads.get(msg.key).size() + " for " + msg.key);
+            System.out.println(pendingInternalReads.get(msg.key).size() + " for " + msg.key);
             if (pendingInternalReads.get(msg.key).size() == N) {
                 Pair<Integer, String> best = pendingInternalReads.get(msg.key).stream()
                         .max(Comparator.comparingInt(Pair::getLeft)) // choose highest version
@@ -346,12 +352,17 @@ public class Actor extends AbstractActor {
             if(!currentView.contains(getSender())){
                 boolean insertion = false;
                 int index = 0;
-                while(!insertion){
+                while(!insertion && index < currentView.size()){
                     if (id_ref_association.get(currentView.get(index)) > msg.key){
                         currentView.add(index, getSender());
                         insertion = true;
                     }
                     index = index + 1;
+                }
+                //this means that it is the node with the highest id, should be inserted at the
+                //end of the view
+                if(!insertion){
+                    currentView.add(getSender());
                 }
                 id_ref_association.put(getSender(), msg.key);
                 id_ref_association = Main.sortByValue(id_ref_association);
@@ -436,9 +447,6 @@ public class Actor extends AbstractActor {
         this.id_ref_association = msg.map;
         this.clients.addAll(msg.clients);
         //we search the right neighbour of the node, as requested
-        //note that we never implement an exception for the case where nodes_to_contact
-        //remains empty even after the search, as it is assumable from the project description
-        //that such a case never happens/should never happen
         ArrayList<ActorRef> nodes_to_contact = new ArrayList<>();
         int temp = 0;
         while(nodes_to_contact.size() != 1 && temp < currentView.size()){
@@ -447,8 +455,22 @@ public class Actor extends AbstractActor {
             }
             temp = temp + 1;
         }
+        //if the arraylist is empty, it means we are inserting node with the highest id
+        //thus we need to cycle back and ask the first node for the values
+        if(nodes_to_contact.isEmpty()){
+            nodes_to_contact.add(currentView.get(0));
+        }
         //we contact the node we obtained previously
         nodes_to_contact.get(0).tell(new RequestValues(this.id), getSelf());
+        // Schedule a timeout in case not enough responses arrive in time
+        joinTimeout = getContext().getSystem().scheduler().scheduleOnce(
+                scala.concurrent.duration.Duration.create(TIMEOUT_JOIN, "milliseconds"),
+                getSelf(),
+                new TimeoutJoin(this.id),
+                getContext().getDispatcher(),
+                getSelf()
+        );
+
     }
 
     private void provideValues(RequestValues msg){
@@ -459,12 +481,39 @@ public class Actor extends AbstractActor {
                 available_values.put(i, values.get(i));
             }
         }
-        getSender().tell(new SendValues(available_values), getSelf());
+        getSender().tell(new SendValues(available_values, this.id), getSelf());
     }
 
     private void setValuesAndRead(SendValues msg){
+        //manually manage the join timeout, due to it firing even when it should not
+        //if left alone
+        if (joinTimeout != null && !joinTimeout.isCancelled()) {
+            joinTimeout.cancel();
+            joinTimeout = null;
+        }
         //we set the value obtained by the neighbour node
-        this.values = msg.values;
+        //Note that, if the node we are inserting is the new last node, the neighbour it
+        //contacted is the first one, which may also hold items the new node is not
+        //responsible for (ex. suppose node with id=234 joins and it's the last node of the
+        //topology, thus its neighbour is node with id=10. Node 10 holds the values with key
+        //{3,4,45}. Node 234, of course, can't possibly be the responsible for items of key
+        //{3,4}). Thus, we need to manage this situation
+        if(msg.key < this.id){
+            for(Integer j:msg.values.keySet()){
+                if (j > msg.key){
+                    //the only values contained in the first node that the last one
+                    //could be responsible for are those that cycled the ring topology.
+                    //Furthermore, the only items that could be stored in the first node
+                    //that have a value higher than its id can only be those that were
+                    //greater than the id of the last node
+                    this.values.put(j, msg.values.get(j));
+                }
+            }
+        }
+        else{
+            this.values = msg.values;
+        }
+        System.out.println(this.values);
         for(Integer j: values.keySet()){
             //we add each element to the pendingInternalReads - this is done so to prevent the join
             //process to end when it shouldn't
@@ -516,12 +565,17 @@ public class Actor extends AbstractActor {
                 //We, however, keep the view ordered for simplicity's sake
                 boolean insertion = false;
                 int index = 0;
-                while(!insertion){
+                while(!insertion && index < N){
                     if (id_ref_association.get(currentView.get(index)) > this.id){
                         currentView.add(index, this.self());
                         insertion = true;
                     }
                     index = index + 1;
+                }
+                //this means that it is the node with the highest id, should be inserted at the
+                //end of the view
+                if(!insertion){
+                    currentView.add(getSender());
                 }
                 id_ref_association.put(this.self(), this.id);
                 id_ref_association = Main.sortByValue(id_ref_association);
@@ -554,6 +608,11 @@ public class Actor extends AbstractActor {
             pendingReads.get(timeout.request).clear();
             fifo.remove(timeout.request);
         }
+    }
+
+    private void onTimeoutJoin(TimeoutJoin msg){
+        System.out.println("Join for node " + msg.key + " failed due to neighbour being crashed");
+
     }
 
     
@@ -603,8 +662,8 @@ public class Actor extends AbstractActor {
     }
 
     // Helper method to find responsible nodes
-    private List<ActorRef> findResponsibleNodes(int key, List<ActorRef> view) {
-        List<ActorRef> responsible = new ArrayList<>();
+    private ArrayList<ActorRef> findResponsibleNodes(int key, ArrayList<ActorRef> view) {
+        ArrayList<ActorRef> responsible = new ArrayList<>();
         // Add the nodes that are responsible for the key to the list
         for (int i = 0; i < view.size(); i++) {
             if (id_ref_association.get(view.get(i)) >= key && responsible.size() < N) {
@@ -632,17 +691,70 @@ public class Actor extends AbstractActor {
         this.clients.addAll(msg.clients);
     }
 
-    private void printValues(PrintValues msg) {
-        System.out.println("Values in node " + this.id + ":");
-        for (Map.Entry<Integer, Pair<Integer, String>> entry : values.entrySet()) {
-            System.out.println("Key: " + entry.getKey() + " -> Version: " + entry.getValue().getLeft() + ", Value: " + entry.getValue().getRight());
-        }
-    }
 
     private void onRecoveryMsg(RecoveryMsg msg) {
-        System.out.println("Node " + this.id + " recovered");
+        System.out.println("Starting recovery for node " + this.id);
+        msg.helperNode.tell(new RequestView(getSelf()), getSelf());
+    }
+
+    private void getAddedValues(ImplementView msg){
+        this.currentView = msg.nodes;
+        this.id_ref_association = msg.map;
+        this.clients.addAll(msg.clients);
+        //we remove the values for which we are not responsible anymore
+        for(Integer j: values.keySet()){
+            ArrayList<ActorRef> current_nodes = new ArrayList<>();
+            current_nodes = findResponsibleNodes(j, currentView);
+            if(!current_nodes.contains(this.self())){
+                values.remove(j);
+                System.out.println("values removed: " + j + " for current set: " + current_nodes);
+            }
+        }
+        //we get the right neighbour and ask it for the values that the node
+        //should be responsible, just like in the join
+        //Again, if no node has an id greater than the one of this node, it means it is the
+        //last one of the topology, which means its right neighbour in clockwise order is the
+        //first one.
+        ArrayList <ActorRef> nodes_to_contact = new ArrayList<>();
+        int temp = 0;
+        while(nodes_to_contact.size() != 1 && temp < currentView.size()){
+            if (id_ref_association.get(currentView.get(temp)) > this.id){
+                nodes_to_contact.add(currentView.get(temp));
+            }
+            temp = temp + 1;
+        }
+        if(nodes_to_contact.size() != 1){
+            nodes_to_contact.add(currentView.get(0));
+        }
+        //we contact the node we obtained previously
+        nodes_to_contact.get(0).tell(new RequestValues(this.id), getSelf());
+
+    }
+
+    private void finalizeRecovery(SendValues msg){
+        //we set the set of values we obtained
+        //by doing this, we also may update old values
+        values.putAll(msg.values);
+        //we finally recover the node
         getContext().become(active());
-        msg.helperNode.tell(new JoinMsg(this.id, true), getSelf());
+        System.out.println("Node " + this.id + " recovered");
+        System.out.println("Values in node " + id_ref_association.get(getSelf()) + ": " + values);
+    }
+
+    private void crashed_reply(InternalGetMsg msg){
+        //to permit a join to succeed even when a node is crashed, we make the crashed
+        //node reply with a fake value that will always be discarded when selecting the
+        //one to return.
+        //This implies that there exists something that is able to detect that a node has
+        //crashed locally and that thus can enable a specific routine.
+        int delayMs = 100 + random.nextInt(1000); // Delay between 100ms and 3000ms
+        System.out.println("Sending reply...");
+        ActorRef originalSender = getSender();
+        getContext().getSystem().scheduler().scheduleOnce(
+                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                () -> originalSender.tell(new Actor.ReceiveMsg(msg.key, -1, "null", true), getSelf()),
+                getContext().getDispatcher()
+        );
     }
 
     // ---- Message classes below ----
@@ -654,7 +766,13 @@ public class Actor extends AbstractActor {
             this.key = key;
             this.request = request;
         }
+    }
 
+    public static class TimeoutJoin implements Serializable {
+        public final int key;
+        public TimeoutJoin(int key) {
+            this.key = key;
+        }
     }
 
     public static class TimeoutW implements Serializable {
@@ -700,9 +818,10 @@ public class Actor extends AbstractActor {
 
     public static class SendValues implements Serializable{
         public Map<Integer, Pair<Integer,String>> values;
-
-        public SendValues(Map<Integer, Pair<Integer, String>> values) {
+        public int key;
+        public SendValues(Map<Integer, Pair<Integer, String>> values, int key) {
             this.values = values;
+            this.key = key;
         }
     }
 
@@ -861,12 +980,7 @@ public class Actor extends AbstractActor {
         }
     }
 
-    public static class CrashMsg implements Serializable {
-        public final boolean isCrashed;
-        public CrashMsg(boolean isCrashed) {
-            this.isCrashed = isCrashed;
-        }
-    }
+    public static class CrashMsg implements Serializable {}
 
     public static class RecoveryMsg implements Serializable {
         public final ActorRef helperNode;
@@ -874,8 +988,6 @@ public class Actor extends AbstractActor {
             this.helperNode = helperNode;
         }
     }
-
-    public static class PrintValues implements Serializable {}
 
     @Override
     public Receive createReceive() {
@@ -899,6 +1011,7 @@ public class Actor extends AbstractActor {
             .match(JoinMsg.class, this::onJoinMessage)
             .match(RequestView.class, this::onRequestView)
             .match(ImplementView.class, this::onImplementView)
+                .match(TimeoutJoin.class, this::onTimeoutJoin)
             .match(RequestValues.class, this::provideValues)
             .match(SendValues.class, this::setValuesAndRead)
             .match(SendMsg.class, this::internalSetValue)
@@ -908,17 +1021,18 @@ public class Actor extends AbstractActor {
             .match(CrashMsg.class, msg -> {
                 getContext().become(crashed());
             })
-            .match(PrintValues.class, this::printValues)
             .build();
     }
 
     private Receive crashed() {
         return receiveBuilder()
-            .match(RecoveryMsg.class, this::onRecoveryMsg)
-            .match(PrintValues.class, this::printValues)
-            .matchAny(msg -> {
+                .match(RecoveryMsg.class, this::onRecoveryMsg)
+                .match(ImplementView.class, this::getAddedValues)
+                .match(SendValues.class, this::finalizeRecovery)
+                .match(InternalGetMsg.class, this::crashed_reply)
+                .matchAny(msg -> {
                 System.out.println("Node " + this.id + " is crashed. Ignoring: " + msg.getClass().getSimpleName());
-            })
-            .build();
+                })
+                .build();
     }
 }

@@ -121,46 +121,47 @@ public class Main {
         node.tell(new Actor.SetClientsView(clients), ActorRef.noSender());
     }
 
-    
-    nodes.get(0).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(2);
-    nodes.get(1).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(2);
-    nodes.get(2).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(2);
-    nodes.get(3).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(2);
-    nodes.get(4).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(3);
-    nodes.get(1).tell(new Actor.CrashMsg(true), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(3);
-    client0.tell(new Client.GetMsg(4), client0);
-    
-    TimeUnit.SECONDS.sleep(4);
+    nodes.get(1).tell(new Actor.CrashMsg(), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(7);
     ActorRef node = system.actorOf(
-            Actor.props(23),    
-            "node_23" 
+            Actor.props(19),    // actor class
+            "node_19"     // the new actor name (unique within the system)
     );
+
+    node.tell(new Actor.JoinMsg(19, nodes.get(4)), ActorRef.noSender());
+
+    TimeUnit.SECONDS.sleep(4);
+
+    node = system.actorOf(
+            Actor.props(23),    // actor class
+            "node_23"     // the new actor name (unique within the system)
+    );
+
     node.tell(new Actor.JoinMsg(23, nodes.get(4)), ActorRef.noSender());
-    nodes.add(2,node);
-    
-    TimeUnit.SECONDS.sleep(5);
+
+    TimeUnit.SECONDS.sleep(4);
+
+
     nodes.get(1).tell(new Actor.RecoveryMsg(nodes.get(0)), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(3);
-    client0.tell(new Client.GetMsg(4), client0);
-    TimeUnit.SECONDS.sleep(3);
-    nodes.get(0).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(2);
-    nodes.get(1).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(2);
-    nodes.get(2).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(2);
-    nodes.get(3).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(2);
-    nodes.get(4).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(2);
-    nodes.get(5).tell(new Actor.PrintValues(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(2);
+
+    TimeUnit.SECONDS.sleep(7);
+
+    node = system.actorOf(
+            Actor.props(234),    // actor class
+            "node_234"     // the new actor name (unique within the system)
+    );
+
+    node.tell(new Actor.JoinMsg(234, nodes.get(4)), ActorRef.noSender());
+
+    TimeUnit.SECONDS.sleep(7);
+
+    client0.tell(new Client.GetMsg(45), client0);
+    client1.tell(new Client.GetMsg(4), client1);
+    client2.tell(new Client.UpdateMsg(4, "Antananarivo"), client2);
+
+
+
+
     //Simulation to test the Join
     /*
     ActorRef node = system.actorOf(

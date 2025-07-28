@@ -5,7 +5,7 @@ public final class Config {
     public static final int N = 3;
     public static final int W = calculateW();
     public static final int R = calculateR();
-    public static final int TIMEOUT_MS = 2500;
+    public static final int TIMEOUT_MS = 1500;
 
     private Config() {} 
     private static int calculateW() {
