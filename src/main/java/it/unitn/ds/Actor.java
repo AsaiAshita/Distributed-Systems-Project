@@ -700,7 +700,7 @@ public class Actor extends AbstractActor {
     private void getAddedValues(ImplementView msg){
         this.currentView = msg.nodes;
         this.id_ref_association = msg.map;
-        this.clients.addAll(msg.clients);
+        //this.clients.addAll(msg.clients); //as it is, this would only duplicate the client list
         //we remove the values for which we are not responsible anymore
         for(Integer j: values.keySet()){
             ArrayList<ActorRef> current_nodes = new ArrayList<>();
