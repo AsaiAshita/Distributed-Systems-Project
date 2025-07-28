@@ -734,7 +734,24 @@ public class Actor extends AbstractActor {
     private void finalizeRecovery(SendValues msg){
         //we set the set of values we obtained
         //by doing this, we also may update old values
-        values.putAll(msg.values);
+        //Note that, as for the join, if the node we are recovering is the last of the
+        //topology, its right neighbour may contain also values that the recovering node
+        //has no business dealing with, hence we need to check for this.
+        if(msg.key < this.id){
+            for(Integer j:msg.values.keySet()){
+                if (j > msg.key){
+                    //the only values contained in the first node that the last one
+                    //could be responsible for are those that cycled the ring topology.
+                    //Furthermore, the only items that could be stored in the first node
+                    //that have a value higher than its id can only be those that were
+                    //greater than the id of the last node
+                    this.values.put(j, msg.values.get(j));
+                }
+            }
+        }
+        else{
+            this.values.putAll(msg.values)
+        }
         //we finally recover the node
         getContext().become(active());
         System.out.println("Node " + this.id + " recovered");
