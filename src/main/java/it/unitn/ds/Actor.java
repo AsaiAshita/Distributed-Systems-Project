@@ -764,14 +764,30 @@ public class Actor extends AbstractActor {
         //one to return.
         //This implies that there exists something that is able to detect that a node has
         //crashed locally and that thus can enable a specific routine.
-        int delayMs = 100 + random.nextInt(1000); // Delay between 100ms and 3000ms
-        System.out.println("Sending reply...");
+        if(msg.flag){
+            int delayMs = 100 + random.nextInt(1000); // Delay between 100ms and 3000ms
+            //System.out.println("Sending reply...");
+            ActorRef originalSender = getSender();
+            getContext().getSystem().scheduler().scheduleOnce(
+                    scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                    () -> originalSender.tell(new Actor.ReceiveMsg(msg.key, -1, "null", true), getSelf()),
+                    getContext().getDispatcher()
+            );
+        }
+        else{
+            //the message was sent in the scope of a get. In this case, we do nothing, as the node is crashed
+            //and the daemon knows the operation will simply timeout if we do nothing 
+        }
+    }
+
+    private void sendTimeoutRead(GetMsg msg){
         ActorRef originalSender = getSender();
-        getContext().getSystem().scheduler().scheduleOnce(
-                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
-                () -> originalSender.tell(new Actor.ReceiveMsg(msg.key, -1, "null", true), getSelf()),
-                getContext().getDispatcher()
-        );
+        originalSender.tell(new SendMsg("Read of value " + msg.key + " failed due to coordinator crashing"), getSelf());
+    }
+
+    private void sendTimeoutWrite(UpdateMsg msg){
+        ActorRef originalSender = getSender();
+        originalSender.tell(new SendMsg("Write of value " + msg.value + " for key " + msg.key + " failed due to coordinator crashing"), getSelf());
     }
 
     // ---- Message classes below ----
@@ -1047,9 +1063,12 @@ public class Actor extends AbstractActor {
                 .match(ImplementView.class, this::getAddedValues)
                 .match(SendValues.class, this::finalizeRecovery)
                 .match(InternalGetMsg.class, this::crashed_reply)
+                .match(GetMsg.class, this::sendTimeoutRead)
+                .match(UpdateMsg.class, this::sendTimeoutWrite)
                 .matchAny(msg -> {
                 System.out.println("Node " + this.id + " is crashed. Ignoring: " + msg.getClass().getSimpleName());
                 })
                 .build();
     }
 }
+
