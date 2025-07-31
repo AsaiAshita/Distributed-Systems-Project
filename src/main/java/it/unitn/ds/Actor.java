@@ -112,7 +112,7 @@ public class Actor extends AbstractActor {
         }
         if (nodesForGet.size() != N){
             int temp = nodesForGet.size();
-            for(int i=0; i<N-temp; i++){
+            for(int i=0; i<N-temp && i<currentView.size(); i++){
                 nodesForGet.add(currentView.get(i));
             }
         }
@@ -210,7 +210,7 @@ public class Actor extends AbstractActor {
         //respected by the constraint itself
         else{
             pendingInternalReads.get(msg.key).add(Pair.of(msg.version, msg.value));
-            System.out.println(pendingInternalReads.get(msg.key).size() + " for " + msg.key);
+            //System.out.println(pendingInternalReads.get(msg.key).size() + " for " + msg.key);
             if (pendingInternalReads.get(msg.key).size() == N) {
                 Pair<Integer, String> best = pendingInternalReads.get(msg.key).stream()
                         .max(Comparator.comparingInt(Pair::getLeft)) // choose highest version
@@ -247,7 +247,7 @@ public class Actor extends AbstractActor {
         }
         if (nodesForGet.size() != N){
             int temp = nodesForGet.size();
-            for(int i=0; i<N-temp; i++){
+            for(int i=0; i<N-temp && i<currentView.size(); i++){
                 nodesForGet.add(currentView.get(i));
             }
         }
@@ -353,7 +353,8 @@ public class Actor extends AbstractActor {
                 boolean insertion = false;
                 int index = 0;
                 while(!insertion && index < currentView.size()){
-                    if (id_ref_association.get(currentView.get(index)) > msg.key){
+                    Integer nodeId = id_ref_association.get(currentView.get(index));
+                    if (nodeId != null && nodeId > msg.key){
                         currentView.add(index, getSender());
                         insertion = true;
                     }
@@ -395,8 +396,8 @@ public class Actor extends AbstractActor {
 
                 //we first check if the value is less than the first node of the system. If it is, it is trivial to
                 //find all the nodes responsible to it, as they are the first N nodes of the system
-                if(values_to_check.get(i) <= id_ref_association.get((currentView.get(0)))){
-                    for(int k=0; k<N; k++){
+                if(!currentView.isEmpty() && values_to_check.get(i) <= id_ref_association.get((currentView.get(0)))){
+                    for(int k=0; k<N && k<currentView.size(); k++){
                         nodes_having_value.add(currentView.get((k)%currentView.size()));
                         //System.out.println("Added the following node " + currentView.get((k)%currentView.size()) + " for actor " + getSelf());
                     }
@@ -420,9 +421,9 @@ public class Actor extends AbstractActor {
                 //For precaution, we check if nodes_having_value does at least have some values (in reality, if it check the conditions
                 //it should never even have a value in it, but better safe than sorry)
                 //System.out.println(nodes_having_value + " for node " + getSelf() + " and value " + values_to_check.get(i));
-                if(nodes_having_value.size() != N){
+                if(nodes_having_value.size() != N && !currentView.isEmpty()){
                     int size_before_insertion = nodes_having_value.size();
-                    for(int j=0; j<N-size_before_insertion; j++){
+                    for(int j=0; j<N-size_before_insertion && j<currentView.size(); j++){
                         nodes_having_value.add(currentView.get(j));
                     }
                 }
@@ -457,7 +458,7 @@ public class Actor extends AbstractActor {
         }
         //if the arraylist is empty, it means we are inserting node with the highest id
         //thus we need to cycle back and ask the first node for the values
-        if(nodes_to_contact.isEmpty()){
+        if(nodes_to_contact.isEmpty() && !currentView.isEmpty()){
             nodes_to_contact.add(currentView.get(0));
         }
         //we contact the node we obtained previously
@@ -513,7 +514,7 @@ public class Actor extends AbstractActor {
         else{
             this.values = msg.values;
         }
-        System.out.println(this.values);
+        //System.out.println(this.values);
         for(Integer j: values.keySet()){
             //we add each element to the pendingInternalReads - this is done so to prevent the join
             //process to end when it shouldn't
@@ -707,7 +708,7 @@ public class Actor extends AbstractActor {
             current_nodes = findResponsibleNodes(j, currentView);
             if(!current_nodes.contains(this.self())){
                 values.remove(j);
-                System.out.println("values removed: " + j + " for current set: " + current_nodes);
+                //System.out.println("values removed: " + j + " for current set: " + current_nodes);
             }
         }
         //we get the right neighbour and ask it for the values that the node
@@ -750,7 +751,7 @@ public class Actor extends AbstractActor {
             }
         }
         else{
-            this.values.putAll(msg.values)
+            this.values.putAll(msg.values);
         }
         //we finally recover the node
         getContext().become(active());
