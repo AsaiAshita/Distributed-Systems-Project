@@ -2,7 +2,6 @@ package it.unitn.ds;
 
 import java.io.IOException;
 import akka.actor.ActorRef;
-import akka.actor.ActorRefFactory;
 import akka.actor.ActorSystem;
 
 import java.util.*;
@@ -10,7 +9,8 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.lang3.tuple.Pair;
 
- 
+
+
 public class Main {
 
   public static Map<ActorRef, Integer> sortByValue(Map<ActorRef, Integer> map) {
@@ -65,8 +65,10 @@ public class Main {
     valuesNode0.put(45, Pair.of(1, "val45"));
 
 
+
+
     Map<Integer, Pair<Integer, String>> valuesNode1 = new HashMap<>();
-    valuesNode1.put(4, Pair.of(2, "val4"));
+    valuesNode1.put(4, Pair.of(1, "val4"));
     valuesNode1.put(9, Pair.of(1, "val9"));
     valuesNode1.put(11, Pair.of(1, "val11"));
     valuesNode1.put(45, Pair.of(1, "val45"));
@@ -76,8 +78,8 @@ public class Main {
     Map<Integer, Pair<Integer, String>> valuesNode2 = new HashMap<>();
     valuesNode2.put(4, Pair.of(1, "val4"));
     valuesNode2.put(9, Pair.of(1, "val9"));
-    valuesNode2.put(11, Pair.of(2, "val11"));
-    valuesNode2.put(24, Pair.of(2, "val24"));
+    valuesNode2.put(11, Pair.of(1, "val11"));
+    valuesNode2.put(24, Pair.of(1, "val24"));
     valuesNode2.put(29, Pair.of(1, "val29"));
 
 
@@ -101,6 +103,13 @@ public class Main {
     allValues.add(valuesNode3);
     allValues.add(valuesNode4);
 
+    Config.MOST_RECENT_VERSION.put(4, 1);
+    Config.MOST_RECENT_VERSION.put(9, 1);
+    Config.MOST_RECENT_VERSION.put(11, 1);
+    Config.MOST_RECENT_VERSION.put(24, 1);
+    Config.MOST_RECENT_VERSION.put(29, 1);
+    Config.MOST_RECENT_VERSION.put(45, 1);
+
     // Create clients
     ArrayList<ActorRef> clients = new ArrayList<>();
     ActorRef client0 = system.actorOf(Client.props(0,nodes), "client_0");
@@ -121,7 +130,7 @@ public class Main {
         node.tell(new Actor.SetClientsView(clients), ActorRef.noSender());
     }
 
-    nodes.get(1).tell(new Actor.CrashMsg(), ActorRef.noSender());
+    /*nodes.get(1).tell(new Actor.CrashMsg(), ActorRef.noSender());
     TimeUnit.SECONDS.sleep(7);
     ActorRef node = system.actorOf(
             Actor.props(19),    // actor class
@@ -141,6 +150,11 @@ public class Main {
 
     TimeUnit.SECONDS.sleep(4);
 
+    client0.tell(new Client.GetMsg(45), client0);
+    client1.tell(new Client.GetMsg(4), client1);
+    client2.tell(new Client.UpdateMsg(4, "Antananarivo"), client2);
+
+    TimeUnit.SECONDS.sleep(4);
 
     nodes.get(1).tell(new Actor.RecoveryMsg(nodes.get(0)), ActorRef.noSender());
 
@@ -158,6 +172,52 @@ public class Main {
     client0.tell(new Client.GetMsg(45), client0);
     client1.tell(new Client.GetMsg(4), client1);
     client2.tell(new Client.UpdateMsg(4, "Antananarivo"), client2);
+    client3.tell(new Client.GetMsg(11), client3);
+     */
+
+    client0.tell(new Client.GetMsg(4), client0);
+    client1.tell(new Client.GetMsg(4), client1);
+    client2.tell(new Client.UpdateMsg(4, "Vallelunga"), client2);
+    client2.tell(new Client.UpdateMsg(4, "Vallegioia"), client2);
+    client2.tell(new Client.UpdateMsg(4, "Vallarsa"), client2);
+    client2.tell(new Client.GetMsg(4), client2);
+    client3.tell(new Client.GetMsg(4), client3);
+    client2.tell(new Client.GetMsg(4), client2);
+
+    TimeUnit.SECONDS.sleep(5);
+
+    client0.tell(new Client.GetMsg(4), client0);
+    client1.tell(new Client.GetMsg(4), client1);
+    client2.tell(new Client.UpdateMsg(4, "Venezuela"), client2);
+    client3.tell(new Client.UpdateMsg(45, "Paraguay"), client3);
+    client0.tell(new Client.UpdateMsg(11, "Nicaragua"), client0);
+    client1.tell(new Client.UpdateMsg(4, "Antananarivo"), client1);
+    client3.tell(new Client.GetMsg(4), client3);
+    client2.tell(new Client.GetMsg(4), client2);
+
+    TimeUnit.SECONDS.sleep(2);
+    client3.tell(new Client.GetMsg(4), client3);
+    client2.tell(new Client.GetMsg(45), client2);
+    client3.tell(new Client.GetMsg(4), client3);
+    client2.tell(new Client.GetMsg(11), client2);
+
+    TimeUnit.SECONDS.sleep(3);
+    client2.tell(new Client.GetMsg(4), client2);
+    client2.tell(new Client.GetMsg(45), client2);
+    client2.tell(new Client.GetMsg(24), client2);
+    client2.tell(new Client.GetMsg(29), client2);
+
+    client2.tell(new Client.UpdateMsg(4, "Swatziland"), client2);
+    client2.tell(new Client.UpdateMsg(45, "Danimarca"), client2);
+    client2.tell(new Client.UpdateMsg(24, "Botswana"), client2);
+    client2.tell(new Client.UpdateMsg(29, "Isole Salomone"), client2);
+
+    client2.tell(new Client.GetMsg(4), client2);
+    client2.tell(new Client.GetMsg(45), client2);
+    client2.tell(new Client.GetMsg(24), client2);
+    client2.tell(new Client.GetMsg(29), client2);
+
+
 
 
 

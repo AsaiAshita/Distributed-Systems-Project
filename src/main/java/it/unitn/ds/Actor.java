@@ -175,11 +175,19 @@ public class Actor extends AbstractActor {
                 //if there is a request in the queue and the first one is the one we are serving, we process it
                 //This is to preserve the assumed FIFO-ness of the system
                 //Why is this needed? Because artificial delays could mess up with FIFO
+                //System.out.println("Am I stuck? " + msg.request);
                 if (!fifo.isEmpty() && fifo.get(0).equals(msg.request)) {
                     Pair<Integer, String> best = pendingReads.get(msg.request).stream()
                             .max(Comparator.comparingInt(Pair::getLeft))
                             .orElse(null);
-                    if (best != null) {
+                    //we check the version of the obtained value. If it is less than the write
+                    //version we should have, it means the data is stale and we need to reject
+                    //the read. Else, it can continue
+                    if(Config.MOST_RECENT_VERSION.get(msg.key) > best.getLeft()){
+                        //System.out.println(Config.VECTOR_CLOCKS.get(msg.key) + " and " + best.getLeft());
+                        getSelf().tell(new Timeout(msg.key, msg.request, true), getSelf());
+                    }
+                    else {
                         pendingClients.get(msg.request).tell(new SendMsg(best.getRight(), msg.key, best.getLeft()), getSelf());
                         pendingClients.remove(msg.request);
                         fifo.remove(msg.request);
@@ -298,8 +306,15 @@ public class Actor extends AbstractActor {
                 Pair<Integer, String> best = pendingReads.get(msg.request).stream()
                         .max(Comparator.comparingInt(Pair::getLeft)) // choose highest version
                         .orElse(null);
-
-                if (best != null) {
+                //if the version we got by reading + 1 is less or equal to the theoretical version
+                //we should be on, this means there is a write write conflict, thus we need to abort the
+                //write
+                if(best.getLeft()+1 <= Config.MOST_RECENT_VERSION.get(msg.key)){
+                    //System.out.println(Config.VECTOR_CLOCKS.get(msg.key) + " and " + best.getLeft()+1);
+                    getSelf().tell(new TimeoutW(msg.key, msg.value_to_update, msg.request, true), getSelf());
+                }
+                else {
+                    Config.MOST_RECENT_VERSION.put(msg.key, best.getLeft()+1);
                     pendingClients.get(msg.request).tell(new SendMsg("Successful insertion of value " + msg.value_to_update + " into node of key " + String.valueOf(msg.key) + "\n"), getSelf());
                     int versionUpdate = best.getLeft();
                     versionUpdate = versionUpdate + 1;
@@ -332,6 +347,7 @@ public class Actor extends AbstractActor {
     private void writeUpdate(NewUpdate msg){
         //we update the value stored by the node
         values.put(msg.key, Pair.of(msg.version, msg.value));
+        System.out.println("Values for node " + this.id + ": " + values);
     }
 
     private void onJoinMessage(JoinMsg msg){
@@ -443,8 +459,8 @@ public class Actor extends AbstractActor {
 
     private void onImplementView(ImplementView msg){
         //We set the current view and the ActorRef-id association
-        this.currentView = msg.nodes;
-        this.id_ref_association = msg.map;
+        this.currentView.addAll(msg.nodes);
+        this.id_ref_association.putAll(msg.map);
         this.clients.addAll(msg.clients);
         //we search the right neighbour of the node, as requested
         ArrayList<ActorRef> nodes_to_contact = new ArrayList<>();
@@ -594,7 +610,7 @@ public class Actor extends AbstractActor {
 
     // Called when timeout occurs for a pending read. If quorum was not reached, responds to the client with null.
     private void onTimeoutRead(Timeout timeout) {
-        if (pendingReads.get(timeout.request).size() < R) {
+        if (pendingReads.get(timeout.request).size() < R || timeout.rejection) {
             pendingClients.get(timeout.request).tell(new SendMsg("Read of value failed"), getSelf());
             pendingReads.get(timeout.request).clear();
             fifo.remove(timeout.request);
@@ -603,7 +619,7 @@ public class Actor extends AbstractActor {
 
     // Called when timeout occurs for a pending write. If quorum was not reached, responds to the client with null.
     private void onTimeoutWrite(TimeoutW timeout) {
-        if (pendingReads.get(timeout.request).size() < R) {
+        if (pendingReads.get(timeout.request).size() < W || timeout.rejection) {
             pendingClients.get(timeout.request).tell(new SendMsg("Write of value " + timeout.value + " failed"), getSelf());
             pendingReads.get(timeout.request).clear();
             fifo.remove(timeout.request);
@@ -698,9 +714,13 @@ public class Actor extends AbstractActor {
     }
 
     private void getAddedValues(ImplementView msg){
-        this.currentView = msg.nodes;
-        this.id_ref_association = msg.map;
-        //this.clients.addAll(msg.clients); //as it is, this would only duplicate the client list
+        //clear to prevent repeated values
+        this.currentView.clear();
+        this.currentView.addAll(msg.nodes);
+        this.id_ref_association.putAll(msg.map);
+        //clear to prevent repeated values
+        this.clients.clear();
+        this.clients.addAll(msg.clients);
         //we remove the values for which we are not responsible anymore
         for(Integer j: values.keySet()){
             ArrayList<ActorRef> current_nodes = new ArrayList<>();
@@ -750,7 +770,7 @@ public class Actor extends AbstractActor {
             }
         }
         else{
-            this.values.putAll(msg.values)
+            this.values.putAll(msg.values);
         }
         //we finally recover the node
         getContext().become(active());
@@ -795,9 +815,15 @@ public class Actor extends AbstractActor {
     public static class Timeout implements Serializable {
         public final int key;
         public String request;
+        public boolean rejection = false;
         public Timeout(int key, String request) {
             this.key = key;
             this.request = request;
+        }
+        public Timeout(int key, String request, boolean rejection){
+            this.key = key;
+            this.request = request;
+            this.rejection = true;
         }
     }
 
@@ -812,8 +838,12 @@ public class Actor extends AbstractActor {
         public final int key;
         public final String value;
         public String request;
+        public boolean rejection = false;
         public TimeoutW(int key, String value, String request) {
             this.key = key; this.value = value; this.request = request;
+        }
+        public TimeoutW(int key, String value, String request, boolean rejection) {
+            this.key = key; this.value = value; this.request = request; this.rejection = true;
         }
     }
 

@@ -1,11 +1,16 @@
 package it.unitn.ds;
 
+import java.util.HashMap;
+import java.util.Map;
+
 public final class Config {
     // Parametri di replica 
     public static final int N = 3;
     public static final int W = calculateW();
     public static final int R = calculateR();
     public static final int TIMEOUT_MS = 1500;
+
+    public static final Map<Integer, Integer> MOST_RECENT_VERSION = new HashMap<>();
 
     private Config() {} 
     private static int calculateW() {
