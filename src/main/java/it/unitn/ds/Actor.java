@@ -16,11 +16,7 @@ public class Actor extends AbstractActor {
     // Node identifier
     private int id;
 
-    // Logical Clock, used to identify each request for a client
-    private int clock = 0;
-
     // Number of nodes storing the replica
-    // Fattore di replica configurabile
     private static final int N = Config.N;
 
     // Read quorum - we generalize it to N/2 + 1, as we need W + R > N
@@ -32,7 +28,12 @@ public class Actor extends AbstractActor {
     // List of other nodes in the system (excluding self)
     private ArrayList<ActorRef> currentView;
 
+    //timeout of join sometimes misfires, this is used to make sure it doesn't happen
+    //also happens for write and read, hence we use the same mechanism for them
     private Cancellable joinTimeout = null;
+    private Cancellable readTimeout = null;
+    private Cancellable writeTimeout = null;
+
 
     // Local key-value store: key -> (version, value)
     private Map<Integer, Pair<Integer,String>> values;
@@ -60,10 +61,6 @@ public class Actor extends AbstractActor {
     //normal join should never have this problem
     private static final int TIMEOUT_JOIN = 3000;
 
-    //Set containing all the requests - used to preserve FIFO assumption
-    //This is due to random delays possibly breaking it
-    private ArrayList<String> fifo = new ArrayList<>();
-
     // List of clients
     private ArrayList<ActorRef> clients = new ArrayList<>();
 
@@ -79,32 +76,15 @@ public class Actor extends AbstractActor {
 
      // Handles a Get request from a client. If no read is pending for the key, initiate a quorum read.
     private void getValue(GetMsg getMsg){
-        //a process can issue multiple reads and writes even on the same key, thus this part
-        //is not necessary
-        //if (pendingReadOperations.contains(getMsg.key)) {
-        //    return;
-        //}
-        clock = clock + 1;
-        //System.out.println(clock + " for " + getSelf());
-        String request_id = getMsg.key + "id" + this.id + "c" + clock;
-
-        //pendingReadOperations.add(getMsg.key);
-        pendingReads.put(request_id, new ArrayList<>());
-        pendingClients.put(request_id, getSender());
-        fifo.add(request_id);
-
-        // Send InternalGetMsg to all nodes in the view
-        // Incorrect! Only need to send to the N nodes that have the value!
-        //for (int i = 0; i < currentView.size(); i++) {
-        //    currentView.get(i).tell(new Actor.InternalGetMsg(getMsg.key), getSelf());
-        //}
-
-        final ArrayList<ActorRef> nodesForGet = new ArrayList<>();
+        pendingReads.put(getMsg.request_id, new ArrayList<>());
+        pendingClients.put(getMsg.request_id, getSender());
 
         //find the nodes to which we need to send the request to
         //here for the moment we assume that the nodes are stored in the hashmap in id order.
         //This may be false, however, hence we need to preserve this when we
         //update the view
+        final ArrayList<ActorRef> nodesForGet = new ArrayList<>();
+
         for(int i =0; i<currentView.size(); i++){
             if (id_ref_association.get(currentView.get(i)) >= getMsg.key && nodesForGet.size() < N){
                 nodesForGet.add(currentView.get(i));
@@ -118,20 +98,14 @@ public class Actor extends AbstractActor {
         }
 
         for (int i = 0; i < nodesForGet.size(); i++) {
-            nodesForGet.get(i).tell(new Actor.InternalGetMsg(getMsg.key, request_id), getSelf());
+            nodesForGet.get(i).tell(new Actor.InternalGetMsg(getMsg.key, getMsg.request_id), getSelf());
         }
 
-        // Send to the coordinator as well
-        // Note: it's useless, because the coordinator itself should be in the view
-        // hence if it has the value it will automatically deal with it due to the
-        // mechanism implemented above
-        // getSelf().tell(new Actor.InternalGetMsg(getMsg.key), getSelf());
-
         // Schedule a timeout in case not enough responses arrive in time
-        getContext().getSystem().scheduler().scheduleOnce(
+        readTimeout = getContext().getSystem().scheduler().scheduleOnce(
             scala.concurrent.duration.Duration.create(TIMEOUT_MS, "milliseconds"),
             getSelf(),
-            new Timeout(getMsg.key, request_id),
+            new Timeout(getMsg.key, getMsg.request_id),
             getContext().getDispatcher(),
             ActorRef.noSender()
         );
@@ -176,7 +150,11 @@ public class Actor extends AbstractActor {
                 //This is to preserve the assumed FIFO-ness of the system
                 //Why is this needed? Because artificial delays could mess up with FIFO
                 //System.out.println("Am I stuck? " + msg.request);
-                if (!fifo.isEmpty() && fifo.get(0).equals(msg.request)) {
+                if (readTimeout != null && !readTimeout.isCancelled()) {
+                    readTimeout.cancel();
+                    readTimeout = null;
+                }
+                if (!Config.FIFO.get(pendingClients.get(msg.request)).isEmpty() && Config.FIFO.get(pendingClients.get(msg.request)).get(0).equals(msg.request)) {
                     Pair<Integer, String> best = pendingReads.get(msg.request).stream()
                             .max(Comparator.comparingInt(Pair::getLeft))
                             .orElse(null);
@@ -189,13 +167,13 @@ public class Actor extends AbstractActor {
                     }
                     else {
                         pendingClients.get(msg.request).tell(new SendMsg(best.getRight(), msg.key, best.getLeft()), getSelf());
-                        pendingClients.remove(msg.request);
-                        fifo.remove(msg.request);
+                        //pendingClients.remove(msg.request);
+                        Config.FIFO.get(pendingClients.get(msg.request)).remove(msg.request);
                     }
                 }
                 //if it is not the above case, then we check if the queue is empty. If it is, it is a reschedule message
                 //we can safely drop, as we already processed the request
-                else if (fifo.isEmpty()){
+                else if (Config.FIFO.get(pendingClients.get(msg.request)).isEmpty()){
                     //too late, scheduled message should be dropped
                 }
                 //else we schedule a retry a few milliseconds after to see if the state of the system changed
@@ -234,12 +212,8 @@ public class Actor extends AbstractActor {
 
 
     private void updateValue(UpdateMsg updateMsg){
-        clock = clock + 1;
-        String request_id = updateMsg.key + "id" + this.id + "c" + clock;
-
-        pendingReads.put(request_id, new ArrayList<>());
-        pendingClients.put(request_id, getSender());
-        fifo.add(request_id);
+        pendingReads.put(updateMsg.request_id, new ArrayList<>());
+        pendingClients.put(updateMsg.request_id, getSender());
 
         //we create a list of nodes that we need to send the message to
         final ArrayList<ActorRef> nodesForGet = new ArrayList<>();
@@ -261,14 +235,14 @@ public class Actor extends AbstractActor {
         }
 
         for (int i = 0; i < nodesForGet.size(); i++) {
-            nodesForGet.get(i).tell(new Actor.InternalUpdateMsg(updateMsg.key, updateMsg.value, nodesForGet, request_id), getSelf());
+            nodesForGet.get(i).tell(new Actor.InternalUpdateMsg(updateMsg.key, updateMsg.value, nodesForGet, updateMsg.request_id), getSelf());
         }
 
         // Schedule a timeout in case not enough responses arrive in time
-        getContext().getSystem().scheduler().scheduleOnce(
+        writeTimeout = getContext().getSystem().scheduler().scheduleOnce(
                 scala.concurrent.duration.Duration.create(TIMEOUT_MS, "milliseconds"),
                 getSelf(),
-                new TimeoutW(updateMsg.key, updateMsg.value, request_id),
+                new TimeoutW(updateMsg.key, updateMsg.value, updateMsg.request_id),
                 getContext().getDispatcher(),
                 ActorRef.noSender()
         );
@@ -299,10 +273,14 @@ public class Actor extends AbstractActor {
         pendingReads.get(msg.request).add(Pair.of(msg.version, msg.value));
 
         if (pendingReads.get(msg.request).size() >= W) {
+            if (writeTimeout != null && !writeTimeout.isCancelled()) {
+                writeTimeout.cancel();
+                writeTimeout = null;
+            }
             //if there is a request in the queue and the first one is the one we are serving, we process it
             //This is to preserve the assumed FIFO-ness of the system
             //Why is this needed? Because artificial delays could mess up with FIFO
-            if(!fifo.isEmpty() && fifo.get(0).equals(msg.request)){
+            if(!Config.FIFO.get(pendingClients.get(msg.request)).isEmpty() && Config.FIFO.get(pendingClients.get(msg.request)).get(0).equals(msg.request)){
                 Pair<Integer, String> best = pendingReads.get(msg.request).stream()
                         .max(Comparator.comparingInt(Pair::getLeft)) // choose highest version
                         .orElse(null);
@@ -321,13 +299,13 @@ public class Actor extends AbstractActor {
                     for (int i=0; i<msg.nodes.size(); i++){
                         msg.nodes.get(i).tell(new Actor.NewUpdate(msg.key, versionUpdate, msg.value_to_update), getSelf());
                     }
-                    pendingClients.remove(msg.request);
-                    fifo.remove(msg.request);
+                    //pendingClients.remove(msg.request);
+                    Config.FIFO.get(pendingClients.get(msg.request)).remove(msg.request);
                 }
             }
             //if it is not the above case, then we check if the queue is empty. If it is, it is a reschedule message
             //we can safely drop, as we already processed the request
-            else if(fifo.isEmpty()){
+            else if(Config.FIFO.get(pendingClients.get(msg.request)).isEmpty()){
                 //message is unnecessary, should be dropped
             }
             //else we schedule a retry a few milliseconds after to see if the state of the system changed
@@ -614,7 +592,7 @@ public class Actor extends AbstractActor {
         if (pendingReads.get(timeout.request).size() < R || timeout.rejection) {
             pendingClients.get(timeout.request).tell(new SendMsg("Read of value failed"), getSelf());
             pendingReads.get(timeout.request).clear();
-            fifo.remove(timeout.request);
+            Config.FIFO.get(pendingClients.get(timeout.request)).remove(timeout.request);
         }
     }
 
@@ -623,7 +601,7 @@ public class Actor extends AbstractActor {
         if (pendingReads.get(timeout.request).size() < W || timeout.rejection) {
             pendingClients.get(timeout.request).tell(new SendMsg("Write of value " + timeout.value + " failed"), getSelf());
             pendingReads.get(timeout.request).clear();
-            fifo.remove(timeout.request);
+            Config.FIFO.get(pendingClients.get(timeout.request)).remove(timeout.request);
         }
     }
 

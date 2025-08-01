@@ -110,6 +110,8 @@ public class Main {
     Config.MOST_RECENT_VERSION.put(29, 1);
     Config.MOST_RECENT_VERSION.put(45, 1);
 
+
+
     // Create clients
     ArrayList<ActorRef> clients = new ArrayList<>();
     ActorRef client0 = system.actorOf(Client.props(0,nodes), "client_0");
@@ -128,6 +130,11 @@ public class Main {
         node.tell(new Actor.SetValues(allValues.get(i)), ActorRef.noSender());
         node.tell(new Actor.SetIdAssociation(id_ref_association), ActorRef.noSender());
         node.tell(new Actor.SetClientsView(clients), ActorRef.noSender());
+    }
+
+    for(int i=0; i<clients.size(); i++){
+      Config.FIFO.put(clients.get(i), new ArrayList<>());
+      Config.VECTOR_CLOCK.put(clients.get(i), 0);
     }
 
     /*nodes.get(1).tell(new Actor.CrashMsg(), ActorRef.noSender());

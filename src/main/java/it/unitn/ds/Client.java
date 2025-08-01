@@ -29,7 +29,12 @@ public class Client extends AbstractActor {
     private void forwardGetMsg(GetMsg msg) {
         ActorRef coordinator = getCoordinator();
         if (coordinator != null) {
-            coordinator.tell(msg, getSelf());
+            String request_id = msg.key + "id" + this.id + "c" + Config.VECTOR_CLOCK.get(getSelf());
+            Config.VECTOR_CLOCK.put(getSelf(), Config.VECTOR_CLOCK.get(getSelf())+1);
+            Config.FIFO.get(getSelf()).add(request_id);
+            //System.out.println(Config.VECTOR_CLOCK);
+            //System.out.println(Config.FIFO);
+            coordinator.tell(new GetMsg(msg.key, request_id), getSelf());
         } else {
             System.out.println("No coordinator available for GetMsg.");
         }
@@ -39,7 +44,12 @@ public class Client extends AbstractActor {
     private void forwardUpdateMsg(UpdateMsg msg) {
         ActorRef coordinator = getCoordinator();
         if (coordinator != null) {
-            coordinator.tell(msg, getSelf());
+            String request_id = msg.key + "id" + this.id + "c" + Config.VECTOR_CLOCK.get(getSelf());
+            Config.VECTOR_CLOCK.put(getSelf(), Config.VECTOR_CLOCK.get(getSelf())+1);
+            Config.FIFO.get(getSelf()).add(request_id);
+            //System.out.println(Config.VECTOR_CLOCK);
+            //System.out.println(Config.FIFO);
+            coordinator.tell(new UpdateMsg(msg.key, msg.value, request_id), getSelf());
         } else {
             System.out.println("No coordinator available for UpdateMsg.");
         }
@@ -65,18 +75,30 @@ public class Client extends AbstractActor {
     // Message for requesting a value
     public static class GetMsg implements Serializable {
         public final int key;
+        public String request_id;
         public GetMsg(int key) {
             this.key = key;
         }
+        public GetMsg(int key, String request_id) {
+            this.key = key;
+            this.request_id = request_id;
+        }
+
     }
 
     // Message for updating a value
     public static class UpdateMsg implements Serializable {
         public final int key;
         public final String value;
+        public String request_id;
         public UpdateMsg(int key, String value) {
             this.key = key;
             this.value = value;
+        }
+        public UpdateMsg(int key, String value, String request_id){
+            this.key = key;
+            this.value = value;
+            this.request_id = request_id;
         }
     }
 

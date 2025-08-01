@@ -1,5 +1,8 @@
 package it.unitn.ds;
 
+import akka.actor.ActorRef;
+
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -11,6 +14,9 @@ public final class Config {
     public static final int TIMEOUT_MS = 1500;
 
     public static final Map<Integer, Integer> MOST_RECENT_VERSION = new HashMap<>();
+    public static final Map<ActorRef, ArrayList<String>> FIFO = new HashMap<>();
+    public static final Map<ActorRef, Integer> VECTOR_CLOCK = new HashMap<>();
+
 
     private Config() {} 
     private static int calculateW() {
