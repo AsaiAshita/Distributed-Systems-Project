@@ -64,16 +64,11 @@ public class Main {
     valuesNode0.put(9, Pair.of(1, "val9"));
     valuesNode0.put(45, Pair.of(1, "val45"));
 
-
-
-
     Map<Integer, Pair<Integer, String>> valuesNode1 = new HashMap<>();
     valuesNode1.put(4, Pair.of(1, "val4"));
     valuesNode1.put(9, Pair.of(1, "val9"));
     valuesNode1.put(11, Pair.of(1, "val11"));
     valuesNode1.put(45, Pair.of(1, "val45"));
-
-
 
     Map<Integer, Pair<Integer, String>> valuesNode2 = new HashMap<>();
     valuesNode2.put(4, Pair.of(1, "val4"));
@@ -82,19 +77,15 @@ public class Main {
     valuesNode2.put(24, Pair.of(1, "val24"));
     valuesNode2.put(29, Pair.of(1, "val29"));
 
-
     Map<Integer, Pair<Integer, String>> valuesNode3 = new HashMap<>();
     valuesNode3.put(11, Pair.of(1, "val11"));
     valuesNode3.put(24, Pair.of(1, "val24"));
     valuesNode3.put(29, Pair.of(1, "val29"));
 
-
     Map<Integer, Pair<Integer, String>> valuesNode4 = new HashMap<>();
     valuesNode4.put(24, Pair.of(1, "val24"));
     valuesNode4.put(29, Pair.of(1, "val29"));
     valuesNode4.put(45, Pair.of(1, "val45"));
-
-
 
     ArrayList<Map<Integer, Pair<Integer, String>>> allValues = new ArrayList<>();
     allValues.add(valuesNode0);
@@ -109,8 +100,6 @@ public class Main {
     Config.MOST_RECENT_VERSION.put(24, 1);
     Config.MOST_RECENT_VERSION.put(29, 1);
     Config.MOST_RECENT_VERSION.put(45, 1);
-
-
 
     // Create clients
     ArrayList<ActorRef> clients = new ArrayList<>();
@@ -137,155 +126,58 @@ public class Main {
       Config.VECTOR_CLOCK.put(clients.get(i), 0);
     }
 
-    /*nodes.get(1).tell(new Actor.CrashMsg(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(7);
-    ActorRef node = system.actorOf(
-            Actor.props(19),    // actor class
-            "node_19"     // the new actor name (unique within the system)
-    );
+    System.out.println("=== STARTING SIMULATION ===");
 
-    node.tell(new Actor.JoinMsg(19, nodes.get(4)), ActorRef.noSender());
-
-    TimeUnit.SECONDS.sleep(4);
-
-    node = system.actorOf(
-            Actor.props(23),    // actor class
-            "node_23"     // the new actor name (unique within the system)
-    );
-
-    node.tell(new Actor.JoinMsg(23, nodes.get(4)), ActorRef.noSender());
-
-    TimeUnit.SECONDS.sleep(4);
-
-    client0.tell(new Client.GetMsg(45), client0);
-    client1.tell(new Client.GetMsg(4), client1);
-    client2.tell(new Client.UpdateMsg(4, "Antananarivo"), client2);
-
-    TimeUnit.SECONDS.sleep(4);
-
-    nodes.get(1).tell(new Actor.RecoveryMsg(nodes.get(0)), ActorRef.noSender());
-
-    TimeUnit.SECONDS.sleep(7);
-
-    node = system.actorOf(
-            Actor.props(234),    // actor class
-            "node_234"     // the new actor name (unique within the system)
-    );
-
-    node.tell(new Actor.JoinMsg(234, nodes.get(4)), ActorRef.noSender());
-
-    TimeUnit.SECONDS.sleep(7);
-
-    client0.tell(new Client.GetMsg(45), client0);
-    client1.tell(new Client.GetMsg(4), client1);
-    client2.tell(new Client.UpdateMsg(4, "Antananarivo"), client2);
-    client3.tell(new Client.GetMsg(11), client3);
-     */
-
+    //Simulate an execution of some update and get operations
+    System.out.println("-- Simulate an execution of some update and get operations --");
     client0.tell(new Client.GetMsg(4), client0);
-    client1.tell(new Client.GetMsg(4), client1);
-    client2.tell(new Client.UpdateMsg(4, "Vallelunga"), client2);
-    client2.tell(new Client.UpdateMsg(4, "Vallegioia"), client2);
-    client2.tell(new Client.UpdateMsg(4, "Vallarsa"), client2);
+    client1.tell(new Client.UpdateMsg(4, "FirstUpdate"), client1);
+    TimeUnit.SECONDS.sleep(3);
     client2.tell(new Client.GetMsg(4), client2);
-    client3.tell(new Client.GetMsg(4), client3);
-    client2.tell(new Client.GetMsg(4), client2);
-
+    TimeUnit.SECONDS.sleep(3);
+    System.out.println("-- Simulation to test for FIFO-ness and sequential consistency --");
+    //Simulation to test for FIFO-ness and sequential consistency
+    client2.tell(new Client.UpdateMsg(9, "UpdateA"), client2);
+    TimeUnit.SECONDS.sleep(3);
+    client2.tell(new Client.UpdateMsg(9, "UpdateB"), client2);
+    TimeUnit.SECONDS.sleep(3);
+    client2.tell(new Client.UpdateMsg(9, "UpdateC"), client2);
+    TimeUnit.SECONDS.sleep(3);
+    client2.tell(new Client.GetMsg(9), client2);
+    TimeUnit.SECONDS.sleep(3);
+    System.out.println("-- Crash and Recovery simulation --");
+    // Crash and Recovery simulation
+    nodes.get(1).tell(new Actor.CrashMsg(), ActorRef.noSender());
     TimeUnit.SECONDS.sleep(5);
-
-    client0.tell(new Client.GetMsg(4), client0);
-    client1.tell(new Client.GetMsg(4), client1);
-    client2.tell(new Client.UpdateMsg(4, "Venezuela"), client2);
-    client3.tell(new Client.UpdateMsg(45, "Paraguay"), client3);
-    client0.tell(new Client.UpdateMsg(11, "Nicaragua"), client0);
-    client1.tell(new Client.UpdateMsg(4, "Antananarivo"), client1);
-    client3.tell(new Client.GetMsg(4), client3);
-    client2.tell(new Client.GetMsg(4), client2);
-
-    TimeUnit.SECONDS.sleep(2);
-    client3.tell(new Client.GetMsg(4), client3);
-    client2.tell(new Client.GetMsg(45), client2);
-    client3.tell(new Client.GetMsg(4), client3);
-    client2.tell(new Client.GetMsg(11), client2);
-
-    TimeUnit.SECONDS.sleep(3);
-    client2.tell(new Client.GetMsg(4), client2);
-    client2.tell(new Client.GetMsg(45), client2);
-    client2.tell(new Client.GetMsg(24), client2);
-    client2.tell(new Client.GetMsg(29), client2);
-
-    client2.tell(new Client.UpdateMsg(4, "Swatziland"), client2);
-    client2.tell(new Client.UpdateMsg(45, "Danimarca"), client2);
-    client2.tell(new Client.UpdateMsg(24, "Botswana"), client2);
-    client2.tell(new Client.UpdateMsg(29, "Isole Salomone"), client2);
-
-    client2.tell(new Client.GetMsg(4), client2);
-    client2.tell(new Client.GetMsg(45), client2);
-    client2.tell(new Client.GetMsg(24), client2);
-    client2.tell(new Client.GetMsg(29), client2);
-
-
-
-
-
-
+    nodes.get(1).tell(new Actor.RecoveryMsg(nodes.get(0)), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(5);
+    System.out.println("-- Simulation to test the Join --");
     //Simulation to test the Join
-    /*
     ActorRef node = system.actorOf(
-            Actor.props(23),    // actor class
-            "node_23"     // the new actor name (unique within the system)
+            Actor.props(99),   
+            "node_99" 
     );
-
-    node.tell(new Actor.JoinMsg(23, nodes.get(2)), ActorRef.noSender());
-
-    TimeUnit.SECONDS.sleep(10);
-
-    nodes.add(node);
-    node = system.actorOf(
-            Actor.props(48),    // actor class
-            "node_48"     // the new actor name (unique within the system)
-    );
-
-    node.tell(new Actor.JoinMsg(48, nodes.get(0)), ActorRef.noSender());
-    */
+    node.tell(new Actor.JoinMsg(99, nodes.get(0)), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(5);
+    client3.tell(new Client.UpdateMsg(11, "NewValAfterJoin"), client3);
+    client0.tell(new Client.GetMsg(11), client0);
+    TimeUnit.SECONDS.sleep(3);
+    System.out.println("-- Simulation to test the Leave --");
     // Simulate leave operation
-    /*
     client0.tell(new Client.GetMsg(4), client0);
     TimeUnit.SECONDS.sleep(3);
-    nodes.get(1).tell(new Actor.LeaveMsg(1, nodes.get(1)), ActorRef.noSender());
+    nodes.get(3).tell(new Actor.LeaveMsg(3, nodes.get(3)), ActorRef.noSender());
     TimeUnit.SECONDS.sleep(3);
     client0.tell(new Client.GetMsg(4), client0);
     TimeUnit.SECONDS.sleep(3);
-     */
+    System.out.println("-- Final consistency check --");
+    // Final consistency check
+    client1.tell(new Client.GetMsg(4), client1);
+    client2.tell(new Client.GetMsg(45), client2);
+    client3.tell(new Client.GetMsg(24), client3);
+    TimeUnit.SECONDS.sleep(3);
 
-
-    //Simulate an execution of some update and get operations.
-    //They were written randomly, so they may not be the best when testing the system.
-    //However, for the time being, it illustrates whether the system works or not.
-
-    /*
-    //simulation to test for FIFO-ness and (possibly) sequential consistency
-    client0.tell(new Client.GetMsg(4), client0);
-    client1.tell(new Client.GetMsg(4), client1);
-    client2.tell(new Client.UpdateMsg(4, "Antananarivo"), client2);
-    client3.tell(new Client.GetMsg(4), client3);
-    client0.tell(new Client.GetMsg(4), client0);
-    client2.tell(new Client.GetMsg(4), client2);
-    client1.tell(new Client.GetMsg(4), client1);
-    client2.tell(new Client.UpdateMsg(4, "Vilnius"), client2);
-    client3.tell(new Client.GetMsg(4), client3);
-    client0.tell(new Client.GetMsg(4), client0);
-    client0.tell(new Client.GetMsg(4), client0);
-    client1.tell(new Client.GetMsg(4), client1);
-    client3.tell(new Client.GetMsg(4), client3);
-    client2.tell(new Client.UpdateMsg(4, "Riga"), client2);
-    client0.tell(new Client.GetMsg(4), client0);
-    TimeUnit.SECONDS.sleep(4);
-    client0.tell(new Client.GetMsg(4), client0);
-    client1.tell(new Client.GetMsg(4), client1);
-    client2.tell(new Client.GetMsg(4), client2);
-    client3.tell(new Client.GetMsg(4), client3);
-    */
+    System.out.println("\n=== SIMULATION COMPLETED ===");
 
     //the following is a remnant of the lab files I took inspiration from for the basis of the project
     System.out.println(">>> Press ENTER to exit <<<");
