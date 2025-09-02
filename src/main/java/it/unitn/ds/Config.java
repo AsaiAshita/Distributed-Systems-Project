@@ -12,9 +12,16 @@ public final class Config {
     public static final int W = calculateW();
     public static final int R = calculateR();
     public static final int TIMEOUT_MS = 1500;
+    public static final int TIMEOUT_JOIN = 3000;
 
+    //used to keep track of the most recent version seen in the execution of the program.
+    //Used to resolve conflicts and enforce sequential consistency
     public static final Map<Integer, Integer> MOST_RECENT_VERSION = new HashMap<>();
+    //Used to keep track of the operations of every client and of their order.
+    //Used to enforce FIFO order.
     public static final Map<ActorRef, ArrayList<String>> FIFO = new HashMap<>();
+    //Used to generate unique requests for every client by keeping track of the logical clock
+    //of every client
     public static final Map<ActorRef, Integer> VECTOR_CLOCK = new HashMap<>();
 
 

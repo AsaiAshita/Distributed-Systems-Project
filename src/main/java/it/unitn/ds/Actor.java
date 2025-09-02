@@ -29,12 +29,11 @@ public class Actor extends AbstractActor {
     private ArrayList<ActorRef> currentView;
 
     //timeout of join sometimes misfires, this is used to make sure it doesn't happen
-    //also happens for write and read, hence we use the same mechanism for them
+    //also happens for write, read and recovery, hence we use the same mechanism for them
     private Cancellable joinTimeout = null;
     private Cancellable readTimeout = null;
     private Cancellable writeTimeout = null;
     private Cancellable recoveryTimeout = null;
-    private Cancellable leaveTimeout = null;
 
 
     // Local key-value store: key -> (version, value)
@@ -61,7 +60,7 @@ public class Actor extends AbstractActor {
     //timeout used for the join, in case one of the nodes has crashed
     //set high enough to not interfere with the normal operations, as a
     //normal join should never have this problem
-    private static final int TIMEOUT_JOIN = 3000;
+    private static final int TIMEOUT_JOIN = Config.TIMEOUT_JOIN;
 
     // List of clients
     private ArrayList<ActorRef> clients = new ArrayList<>();
@@ -76,7 +75,6 @@ public class Actor extends AbstractActor {
         return Props.create(Actor.class, () -> new Actor(id));
     }
 
-     // Handles a Get request from a client. If no read is pending for the key, initiate a quorum read.
     private void getValue(GetMsg getMsg){
         pendingReads.put(getMsg.request_id, new ArrayList<>());
         pendingClients.put(getMsg.request_id, getSender());
@@ -118,7 +116,7 @@ public class Actor extends AbstractActor {
         if (values.containsKey(msg.key)) {
             //System.out.println("Actor. " + getSelf() + " recevied message for key " + msg.key);
             Pair<Integer, String> pair = values.get(msg.key);
-            int delayMs = 100 + random.nextInt(1000); // Delay between 100ms and 1099ms
+            int delayMs = 100 + random.nextInt(200); // Delay between 100ms and 3000ms
 
             ActorRef originalSender = getSender();
             if(!msg.flag){
@@ -169,7 +167,6 @@ public class Actor extends AbstractActor {
                     }
                     else {
                         pendingClients.get(msg.request).tell(new SendMsg(best.getRight(), msg.key, best.getLeft()), getSelf());
-                        //pendingClients.remove(msg.request);
                         Config.FIFO.get(pendingClients.get(msg.request)).remove(msg.request);
                     }
                 }
@@ -254,7 +251,7 @@ public class Actor extends AbstractActor {
     private void handleInternalUpdateGet(InternalUpdateMsg msg) {
         if (values.containsKey(msg.key)) {
             Pair<Integer, String> pair = values.get(msg.key);
-            int delayMs = 100 + random.nextInt(1000); // Delay between 100ms and 1099ms
+            int delayMs = 100 + random.nextInt(2901); // Delay between 100ms and 3000ms
 
             ActorRef originalSender = getSender();
 
@@ -336,6 +333,15 @@ public class Actor extends AbstractActor {
             //after receiving a join message, the new node asks to the node in the message
             //for its view of the system
             msg.actorRef.tell(new RequestView(getSelf()), getSelf());
+            //we set a timeout, if the node we are contacting is crashed (if not, the timeout
+            //is set so that it can never fire)
+            joinTimeout = getContext().getSystem().scheduler().scheduleOnce(
+                    scala.concurrent.duration.Duration.create(TIMEOUT_JOIN, "milliseconds"),
+                    getSelf(),
+                    new TimeoutJoin(this.id),
+                    getContext().getDispatcher(),
+                    getSelf()
+            );
         }
         else{
             //JOIN OPERATION END
@@ -439,6 +445,12 @@ public class Actor extends AbstractActor {
     }
 
     private void onImplementView(ImplementView msg){
+        //we cancel the previously scheduled timeout, as we got an answer
+        if (joinTimeout != null && !joinTimeout.isCancelled()) {
+            joinTimeout.cancel();
+            joinTimeout = null;
+        }
+
         //We set the current view and the ActorRef-id association
         this.currentView.addAll(msg.nodes);
         this.id_ref_association.putAll(msg.map);
@@ -467,7 +479,6 @@ public class Actor extends AbstractActor {
                 getContext().getDispatcher(),
                 getSelf()
         );
-
     }
 
     private void provideValues(RequestValues msg){
@@ -591,19 +602,23 @@ public class Actor extends AbstractActor {
 
     // Called when timeout occurs for a pending read. If quorum was not reached, responds to the client with null.
     private void onTimeoutRead(Timeout timeout) {
-        if (pendingReads.get(timeout.request).size() < R || timeout.rejection) {
-            pendingClients.get(timeout.request).tell(new SendMsg("Read of value failed"), getSelf());
-            pendingReads.get(timeout.request).clear();
-            Config.FIFO.get(pendingClients.get(timeout.request)).remove(timeout.request);
+        if (pendingReads.get(timeout.request).size() <= R || timeout.rejection) {
+            if(Config.FIFO.get(pendingClients.get(timeout.request)).contains(timeout.request)){
+                pendingClients.get(timeout.request).tell(new SendMsg("Read of value failed"), getSelf());
+                pendingReads.get(timeout.request).clear();
+                Config.FIFO.get(pendingClients.get(timeout.request)).remove(timeout.request);
+            }
         }
     }
 
     // Called when timeout occurs for a pending write. If quorum was not reached, responds to the client with null.
     private void onTimeoutWrite(TimeoutW timeout) {
-        if (pendingReads.get(timeout.request).size() < W || timeout.rejection) {
-            pendingClients.get(timeout.request).tell(new SendMsg("Write of value " + timeout.value + " failed"), getSelf());
-            pendingReads.get(timeout.request).clear();
-            Config.FIFO.get(pendingClients.get(timeout.request)).remove(timeout.request);
+        if (pendingReads.get(timeout.request).size() <= W || timeout.rejection) {
+            if(Config.FIFO.get(pendingClients.get(timeout.request)).contains(timeout.request)){
+                pendingClients.get(timeout.request).tell(new SendMsg("Write of value " + timeout.value + " failed"), getSelf());
+                pendingReads.get(timeout.request).clear();
+                Config.FIFO.get(pendingClients.get(timeout.request)).remove(timeout.request);
+            }
         }
     }
 
@@ -616,11 +631,6 @@ public class Actor extends AbstractActor {
         System.out.println("Recovery for node " + msg.key + " failed due to helper being crashed");
     }
 
-    private void onTimeoutLeave(TimeoutLeave msg){
-        System.out.println("Leave for node " + msg.key + " failed due to timeout");
-    }
-
-    
     // Updates the view of known nodes (excluding itself)
     private void updateView(UpdateView msg) {
         this.currentView.addAll(msg.nodes);
@@ -645,15 +655,6 @@ public class Actor extends AbstractActor {
                 }
             }
 
-            // leave timeout
-            leaveTimeout = getContext().getSystem().scheduler().scheduleOnce(
-                scala.concurrent.duration.Duration.create(TIMEOUT_JOIN, "milliseconds"),
-                getSelf(),
-                new TimeoutLeave(this.id),
-                getContext().getDispatcher(),
-                getSelf()
-            );
-
             // For each value, find new responsible nodes and update data
             currentView.remove(getSelf());
             for (Map.Entry<Integer, Pair<Integer, String>> entry : values.entrySet()) {
@@ -666,12 +667,6 @@ public class Actor extends AbstractActor {
             // Contact clients
             for (ActorRef client : clients) {
                 client.tell(new UpdateClientView(getSelf(),true), getSelf());
-            }
-            
-            // Cancel leave timeout since leave completed successfully
-            if (leaveTimeout != null && !leaveTimeout.isCancelled()) {
-                leaveTimeout.cancel();
-                leaveTimeout = null;
             }
         }
         else {
@@ -717,15 +712,20 @@ public class Actor extends AbstractActor {
         msg.helperNode.tell(new RequestView(getSelf()), getSelf());
         // timeout recovery
         recoveryTimeout = getContext().getSystem().scheduler().scheduleOnce(
-            scala.concurrent.duration.Duration.create(TIMEOUT_JOIN, "milliseconds"),
-            getSelf(),
-            new TimeoutRecovery(this.id),
-            getContext().getDispatcher(),
-            getSelf()
+                scala.concurrent.duration.Duration.create(TIMEOUT_JOIN, "milliseconds"),
+                getSelf(),
+                new TimeoutRecovery(this.id),
+                getContext().getDispatcher(),
+                getSelf()
         );
     }
 
     private void getAddedValues(ImplementView msg){
+        // we were able to contact recovery node, hence we cancel the timeout
+        if (recoveryTimeout != null && !recoveryTimeout.isCancelled()) {
+            recoveryTimeout.cancel();
+            recoveryTimeout = null;
+        }
         //clear to prevent repeated values
         this.currentView.clear();
         this.currentView.addAll(msg.nodes);
@@ -760,10 +760,22 @@ public class Actor extends AbstractActor {
         }
         //we contact the node we obtained previously
         nodes_to_contact.get(0).tell(new RequestValues(this.id), getSelf());
-
+        // timeout recovery
+        recoveryTimeout = getContext().getSystem().scheduler().scheduleOnce(
+                scala.concurrent.duration.Duration.create(TIMEOUT_JOIN, "milliseconds"),
+                getSelf(),
+                new TimeoutRecovery(this.id),
+                getContext().getDispatcher(),
+                getSelf()
+        );
     }
 
     private void finalizeRecovery(SendValues msg){
+        // we were able to contact recovery node, hence we cancel the timeout
+        if (recoveryTimeout != null && !recoveryTimeout.isCancelled()) {
+            recoveryTimeout.cancel();
+            recoveryTimeout = null;
+        }
         //we set the set of values we obtained
         //by doing this, we also may update old values
         //Note that, as for the join, if the node we are recovering is the last of the
@@ -784,12 +796,6 @@ public class Actor extends AbstractActor {
         else{
             this.values.putAll(msg.values);
         }
-        // Cancel recovery timeout since recovery completed successfully
-        if (recoveryTimeout != null && !recoveryTimeout.isCancelled()) {
-            recoveryTimeout.cancel();
-            recoveryTimeout = null;
-        }
-        
         //we finally recover the node
         getContext().become(active());
         System.out.println("Node " + this.id + " recovered");
@@ -803,7 +809,7 @@ public class Actor extends AbstractActor {
         //This implies that there exists something that is able to detect that a node has
         //crashed locally and that thus can enable a specific routine.
         if(msg.flag){
-            int delayMs = 100 + random.nextInt(1000); // Delay between 100ms and 1099ms
+            int delayMs = 100 + random.nextInt(1000); // Delay between 100ms and 3000ms
             //System.out.println("Sending reply...");
             ActorRef originalSender = getSender();
             getContext().getSystem().scheduler().scheduleOnce(
@@ -845,13 +851,6 @@ public class Actor extends AbstractActor {
         }
     }
 
-    public static class TimeoutJoin implements Serializable {
-        public final int key;
-        public TimeoutJoin(int key) {
-            this.key = key;
-        }
-    }
-
     public static class TimeoutRecovery implements Serializable {
         public final int key;
         public TimeoutRecovery(int key) {
@@ -859,9 +858,9 @@ public class Actor extends AbstractActor {
         }
     }
 
-    public static class TimeoutLeave implements Serializable {
+    public static class TimeoutJoin implements Serializable {
         public final int key;
-        public TimeoutLeave(int key) {
+        public TimeoutJoin(int key) {
             this.key = key;
         }
     }
@@ -1106,14 +1105,13 @@ public class Actor extends AbstractActor {
             .match(JoinMsg.class, this::onJoinMessage)
             .match(RequestView.class, this::onRequestView)
             .match(ImplementView.class, this::onImplementView)
-            .match(TimeoutJoin.class, this::onTimeoutJoin)
+                .match(TimeoutJoin.class, this::onTimeoutJoin)
             .match(RequestValues.class, this::provideValues)
             .match(SendValues.class, this::setValuesAndRead)
             .match(SendMsg.class, this::internalSetValue)
             .match(LeaveMsg.class, this::onLeaveMsg)
             .match(TransferDataMsg.class, this::onTransferDataMsg)
             .match(SetClientsView.class, this::SetClientsView)
-            .match(TimeoutLeave.class, this::onTimeoutLeave)
             .match(CrashMsg.class, msg -> {
                 getContext().become(crashed());
             })
