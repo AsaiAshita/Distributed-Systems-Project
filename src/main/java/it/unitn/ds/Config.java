@@ -7,12 +7,20 @@ import java.util.HashMap;
 import java.util.Map;
 
 public final class Config {
-    // Parametri di replica 
+    //replication parameter
     public static final int N = 3;
+    //write quorum
     public static final int W = calculateW();
+    //read quorum
     public static final int R = calculateR();
+    //timeouts
     public static final int TIMEOUT_MS = 1500;
-    public static final int TIMEOUT_JOIN = 3000;
+    //value used to generate small random delays when no timeout is involved
+    public static final int QUICK_COMMUNICATION = 400;
+    //in order to not hinder normal operations, timeout_join needs to be higher than TIMEOUT_MS
+    //so that it never gets fired, unless a node is indeed crashed (in real life we may not know this,
+    //but this is used here as a proof-of-concept)
+    public static final int TIMEOUT_JOIN = 6000;
 
     //used to keep track of the most recent version seen in the execution of the program.
     //Used to resolve conflicts and enforce sequential consistency

@@ -57,6 +57,8 @@ public class Actor extends AbstractActor {
     // Timeout duration for quorum wait
     private static final int TIMEOUT_MS = Config.TIMEOUT_MS;
 
+    private static final int QUICK_COMMUNICATION = Config.QUICK_COMMUNICATION;
+
     //timeout used for the join, in case one of the nodes has crashed
     //set high enough to not interfere with the normal operations, as a
     //normal join should never have this problem
@@ -98,7 +100,13 @@ public class Actor extends AbstractActor {
         }
 
         for (int i = 0; i < nodesForGet.size(); i++) {
-            nodesForGet.get(i).tell(new Actor.InternalGetMsg(getMsg.key, getMsg.request_id), getSelf());
+            int delayMs = 100 + random.nextInt(TIMEOUT_MS/3);
+            ActorRef act = nodesForGet.get(i);
+            getContext().getSystem().scheduler().scheduleOnce(
+                    scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                    () -> act.tell(new Actor.InternalGetMsg(getMsg.key, getMsg.request_id), getSelf()),
+                    getContext().getDispatcher()
+            );
         }
 
         // Schedule a timeout in case not enough responses arrive in time
@@ -116,7 +124,7 @@ public class Actor extends AbstractActor {
         if (values.containsKey(msg.key)) {
             //System.out.println("Actor. " + getSelf() + " recevied message for key " + msg.key);
             Pair<Integer, String> pair = values.get(msg.key);
-            int delayMs = 100 + random.nextInt(200); // Delay between 100ms and 3000ms
+            int delayMs = 100 + random.nextInt(TIMEOUT_MS);
 
             ActorRef originalSender = getSender();
             if(!msg.flag){
@@ -154,7 +162,7 @@ public class Actor extends AbstractActor {
                     readTimeout.cancel();
                     readTimeout = null;
                 }
-                if (!Config.FIFO.get(pendingClients.get(msg.request)).isEmpty() && Config.FIFO.get(pendingClients.get(msg.request)).get(0).equals(msg.request)) {
+                if (Config.FIFO.get(pendingClients.get(msg.request)).contains(msg.request) && !Config.FIFO.get(pendingClients.get(msg.request)).isEmpty() && Config.FIFO.get(pendingClients.get(msg.request)).get(0).equals(msg.request)) {
                     Pair<Integer, String> best = pendingReads.get(msg.request).stream()
                             .max(Comparator.comparingInt(Pair::getLeft))
                             .orElse(null);
@@ -166,7 +174,12 @@ public class Actor extends AbstractActor {
                         getSelf().tell(new Timeout(msg.key, msg.request, true), getSelf());
                     }
                     else {
-                        pendingClients.get(msg.request).tell(new SendMsg(best.getRight(), msg.key, best.getLeft()), getSelf());
+                        int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                        getContext().getSystem().scheduler().scheduleOnce(
+                                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                                () -> pendingClients.get(msg.request).tell(new SendMsg(best.getRight(), msg.key, best.getLeft()), getSelf()),
+                                getContext().getDispatcher()
+                        );
                         Config.FIFO.get(pendingClients.get(msg.request)).remove(msg.request);
                     }
                 }
@@ -234,7 +247,13 @@ public class Actor extends AbstractActor {
         }
 
         for (int i = 0; i < nodesForGet.size(); i++) {
-            nodesForGet.get(i).tell(new Actor.InternalUpdateMsg(updateMsg.key, updateMsg.value, nodesForGet, updateMsg.request_id), getSelf());
+            ActorRef act = nodesForGet.get(i);
+            int delayMs = 100 + random.nextInt(TIMEOUT_MS/3);
+            getContext().getSystem().scheduler().scheduleOnce(
+                    scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                    () -> act.tell(new Actor.InternalUpdateMsg(updateMsg.key, updateMsg.value, nodesForGet, updateMsg.request_id), getSelf()),
+                    getContext().getDispatcher()
+            );
         }
 
         // Schedule a timeout in case not enough responses arrive in time
@@ -251,7 +270,7 @@ public class Actor extends AbstractActor {
     private void handleInternalUpdateGet(InternalUpdateMsg msg) {
         if (values.containsKey(msg.key)) {
             Pair<Integer, String> pair = values.get(msg.key);
-            int delayMs = 100 + random.nextInt(2901); // Delay between 100ms and 3000ms
+            int delayMs = 100 + random.nextInt(TIMEOUT_MS);
 
             ActorRef originalSender = getSender();
 
@@ -279,12 +298,12 @@ public class Actor extends AbstractActor {
             //if there is a request in the queue and the first one is the one we are serving, we process it
             //This is to preserve the assumed FIFO-ness of the system
             //Why is this needed? Because artificial delays could mess up with FIFO
-            if(!Config.FIFO.get(pendingClients.get(msg.request)).isEmpty() && Config.FIFO.get(pendingClients.get(msg.request)).get(0).equals(msg.request)){
+            if(Config.FIFO.get(pendingClients.get(msg.request)).contains(msg.request) && !Config.FIFO.get(pendingClients.get(msg.request)).isEmpty() && Config.FIFO.get(pendingClients.get(msg.request)).get(0).equals(msg.request)){
                 Pair<Integer, String> best = pendingReads.get(msg.request).stream()
                         .max(Comparator.comparingInt(Pair::getLeft)) // choose highest version
                         .orElse(null);
                 //if the version we got by reading + 1 is less or equal to the theoretical version
-                //we should be on, this means there is a write write conflict, thus we need to abort the
+                //we should be on, this means there is a write/write conflict, thus we need to abort the
                 //write
                 if(best.getLeft()+1 <= Config.MOST_RECENT_VERSION.get(msg.key)){
                     //System.out.println(Config.VECTOR_CLOCKS.get(msg.key) + " and " + best.getLeft()+1);
@@ -292,19 +311,29 @@ public class Actor extends AbstractActor {
                 }
                 else {
                     Config.MOST_RECENT_VERSION.put(msg.key, best.getLeft()+1);
-                    pendingClients.get(msg.request).tell(new SendMsg("Successful insertion of value " + msg.value_to_update + " into node of key " + String.valueOf(msg.key) + "\n"), getSelf());
+                    int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                    getContext().getSystem().scheduler().scheduleOnce(
+                            scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                            () -> pendingClients.get(msg.request).tell(new SendMsg("Successful insertion of value " + msg.value_to_update + " into node of key " + String.valueOf(msg.key) + "\n"), getSelf()),
+                            getContext().getDispatcher()
+                    );
                     int versionUpdate = best.getLeft();
-                    versionUpdate = versionUpdate + 1;
+                    int finalUpdate = versionUpdate + 1;
                     for (int i=0; i<msg.nodes.size(); i++){
-                        msg.nodes.get(i).tell(new Actor.NewUpdate(msg.key, versionUpdate, msg.value_to_update), getSelf());
+                        delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                        ActorRef act = msg.nodes.get(i);
+                        getContext().getSystem().scheduler().scheduleOnce(
+                                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                                () -> act.tell(new Actor.NewUpdate(msg.key, finalUpdate, msg.value_to_update), getSelf()),
+                                getContext().getDispatcher()
+                        );
                     }
-                    //pendingClients.remove(msg.request);
                     Config.FIFO.get(pendingClients.get(msg.request)).remove(msg.request);
                 }
             }
             //if it is not the above case, then we check if the queue is empty. If it is, it is a reschedule message
             //we can safely drop, as we already processed the request
-            else if(Config.FIFO.get(pendingClients.get(msg.request)).isEmpty()){
+            else if(!Config.FIFO.get(pendingClients.get(msg.request)).contains(msg.request) || Config.FIFO.get(pendingClients.get(msg.request)).isEmpty()){
                 //message is unnecessary, should be dropped
             }
             //else we schedule a retry a few milliseconds after to see if the state of the system changed
@@ -332,7 +361,12 @@ public class Actor extends AbstractActor {
             //JOIN OPERATION START
             //after receiving a join message, the new node asks to the node in the message
             //for its view of the system
-            msg.actorRef.tell(new RequestView(getSelf()), getSelf());
+            int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+            getContext().getSystem().scheduler().scheduleOnce(
+                    scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                    () -> msg.actorRef.tell(new RequestView(getSelf()), getSelf()),
+                    getContext().getDispatcher()
+            );
             //we set a timeout, if the node we are contacting is crashed (if not, the timeout
             //is set so that it can never fire)
             joinTimeout = getContext().getSystem().scheduler().scheduleOnce(
@@ -376,10 +410,7 @@ public class Actor extends AbstractActor {
             ArrayList<Integer> values_to_check = new ArrayList<>();
             //System.out.println(values + " for node " + getSelf());
             for(Integer j: values.keySet()){
-                //System.out.println(j + " for node " + getSelf());
-                if(j <= msg.key){
-                    values_to_check.add(j);
-                }
+                values_to_check.add(j);
             }
             //System.out.println(values_to_check + " for node " +getSelf());
             //we now need to check whether we should eliminate the item or not
@@ -441,7 +472,12 @@ public class Actor extends AbstractActor {
 
     private void onRequestView(RequestView msg){
         //It replies with the current view of the node
-        msg.actorRef.tell(new ImplementView(this.currentView, this.id_ref_association, this.clients), getSelf());       
+        int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+        getContext().getSystem().scheduler().scheduleOnce(
+                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                () -> msg.actorRef.tell(new ImplementView(this.currentView, this.id_ref_association, this.clients), getSelf()),
+                getContext().getDispatcher()
+        );
     }
 
     private void onImplementView(ImplementView msg){
@@ -470,7 +506,12 @@ public class Actor extends AbstractActor {
             nodes_to_contact.add(currentView.get(0));
         }
         //we contact the node we obtained previously
-        nodes_to_contact.get(0).tell(new RequestValues(this.id), getSelf());
+        int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+        getContext().getSystem().scheduler().scheduleOnce(
+                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                () -> nodes_to_contact.get(0).tell(new RequestValues(this.id), getSelf()),
+                getContext().getDispatcher()
+        );
         // Schedule a timeout in case not enough responses arrive in time
         joinTimeout = getContext().getSystem().scheduler().scheduleOnce(
                 scala.concurrent.duration.Duration.create(TIMEOUT_JOIN, "milliseconds"),
@@ -484,12 +525,58 @@ public class Actor extends AbstractActor {
     private void provideValues(RequestValues msg){
         //we find all the values that should be stored in the new node
         Map<Integer, Pair<Integer,String>> available_values = new HashMap<>();
+        ArrayList<ActorRef> dummyView = new ArrayList<>();
+        dummyView.addAll(currentView);
+        Map<ActorRef, Integer> dummyId = new HashMap<>();
+        dummyId.putAll(id_ref_association);
+
+        if(!dummyView.contains(getSender())){
+            boolean insertion = false;
+            int index = 0;
+            while(!insertion && index < currentView.size()){
+                Integer nodeId = id_ref_association.get(currentView.get(index));
+                if (nodeId != null && nodeId > msg.id){
+                    dummyView.add(index, getSender());
+                    insertion = true;
+                }
+                index = index + 1;
+            }
+            //this means that it is the node with the highest id, should be inserted at the
+            //end of the view
+            if(!insertion){
+                dummyView.add(getSender());
+            }
+            dummyId.put(getSender(), msg.id);
+            dummyId = Main.sortByValue(dummyId);
+        }
+
         for(Integer i: values.keySet()){
-            if(i <= msg.id){
+            ArrayList<ActorRef> responsible = new ArrayList<>();
+            // Add the nodes that are responsible for the key to the list
+            for (int j = 0; j < dummyView.size(); j++) {
+                if (dummyId.get(dummyView.get(j)) >= i && responsible.size() < N) {
+                    responsible.add(dummyView.get(j));
+                }
+            }
+            // If the list is not of size N because the key is greater than the last node, add the first N - responsible.size() nodes to the list
+            if (responsible.size() != N) {
+                int temp = responsible.size();
+                for (int j = 0; j < N - temp; j++) {
+                    responsible.add(dummyView.get(j));
+                }
+            }
+            if(responsible.contains(getSender())){
                 available_values.put(i, values.get(i));
             }
         }
-        getSender().tell(new SendValues(available_values, this.id), getSelf());
+
+        int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+        ActorRef act = getSender();
+        getContext().getSystem().scheduler().scheduleOnce(
+                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                () -> act.tell(new SendValues(available_values, this.id), getSelf()),
+                getContext().getDispatcher()
+        );
     }
 
     private void setValuesAndRead(SendValues msg){
@@ -547,7 +634,13 @@ public class Actor extends AbstractActor {
 
             for (int i = 0; i < N; i++) {
                 //System.out.println(nodesForGet.get(i));
-                nodesForGet.get(i).tell(new Actor.InternalGetMsg(j, true), getSelf());
+                ActorRef act = nodesForGet.get(i);
+                int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                getContext().getSystem().scheduler().scheduleOnce(
+                        scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                        () -> act.tell(new Actor.InternalGetMsg(j, true), getSelf()),
+                        getContext().getDispatcher()
+                );
                 //System.out.println("Message sent to " + nodesForGet.get(i));
             }
 
@@ -567,9 +660,15 @@ public class Actor extends AbstractActor {
         if(msg.flag){
             if(pendingInternalReads.isEmpty()){
                 for(int i =0; i<currentView.size(); i++){
-                    currentView.get(i).tell(new JoinMsg(this.id, true), getSelf());
+                    ActorRef act = currentView.get(i);
+                    int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                    getContext().getSystem().scheduler().scheduleOnce(
+                            scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                            () -> act.tell(new JoinMsg(this.id, true), getSelf()),
+                            getContext().getDispatcher()
+                    );
                 }
-                //Now we add the node itself to its local curretnView.
+                //Now we add the node itself to its local currentView.
                 //We, however, keep the view ordered for simplicity's sake
                 boolean insertion = false;
                 int index = 0;
@@ -592,7 +691,12 @@ public class Actor extends AbstractActor {
 
                 //we communicate to the clients that we are joining the system
                 for (ActorRef client : clients) {
-                    client.tell(new UpdateClientView(getSelf(),false), getSelf());
+                    int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                    getContext().getSystem().scheduler().scheduleOnce(
+                            scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                            () -> client.tell(new UpdateClientView(getSelf(),false), getSelf()),
+                            getContext().getDispatcher()
+                    );
                 }
 
             }
@@ -604,7 +708,12 @@ public class Actor extends AbstractActor {
     private void onTimeoutRead(Timeout timeout) {
         if (pendingReads.get(timeout.request).size() <= R || timeout.rejection) {
             if(Config.FIFO.get(pendingClients.get(timeout.request)).contains(timeout.request)){
-                pendingClients.get(timeout.request).tell(new SendMsg("Read of value failed"), getSelf());
+                int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                getContext().getSystem().scheduler().scheduleOnce(
+                        scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                        () -> pendingClients.get(timeout.request).tell(new SendMsg("Read of value failed. Rejected? " + timeout.rejection), getSelf()),
+                        getContext().getDispatcher()
+                );
                 pendingReads.get(timeout.request).clear();
                 Config.FIFO.get(pendingClients.get(timeout.request)).remove(timeout.request);
             }
@@ -615,7 +724,12 @@ public class Actor extends AbstractActor {
     private void onTimeoutWrite(TimeoutW timeout) {
         if (pendingReads.get(timeout.request).size() <= W || timeout.rejection) {
             if(Config.FIFO.get(pendingClients.get(timeout.request)).contains(timeout.request)){
-                pendingClients.get(timeout.request).tell(new SendMsg("Write of value " + timeout.value + " failed"), getSelf());
+                int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                getContext().getSystem().scheduler().scheduleOnce(
+                        scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                        () -> pendingClients.get(timeout.request).tell(new SendMsg("Write of value " + timeout.value + " failed. Rejected? " + timeout.rejection), getSelf()),
+                        getContext().getDispatcher()
+                );
                 pendingReads.get(timeout.request).clear();
                 Config.FIFO.get(pendingClients.get(timeout.request)).remove(timeout.request);
             }
@@ -623,8 +737,7 @@ public class Actor extends AbstractActor {
     }
 
     private void onTimeoutJoin(TimeoutJoin msg){
-        System.out.println("Join for node " + msg.key + " failed due to neighbour being crashed");
-
+        System.out.println("Join for node " + msg.key + " failed due to neighbour or reference node being crashed");
     }
 
     private void onTimeoutRecovery(TimeoutRecovery msg){
@@ -651,7 +764,12 @@ public class Actor extends AbstractActor {
             System.out.println("Initiating leave for node " + this.id);
             for (ActorRef node : currentView) {
                 if (!node.equals(getSelf())) {
-                    node.tell(new LeaveMsg(this.id, getSelf()), getSelf());
+                    int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                    getContext().getSystem().scheduler().scheduleOnce(
+                            scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                            () -> node.tell(new LeaveMsg(this.id, getSelf()), getSelf()),
+                            getContext().getDispatcher()
+                    );
                 }
             }
 
@@ -660,13 +778,23 @@ public class Actor extends AbstractActor {
             for (Map.Entry<Integer, Pair<Integer, String>> entry : values.entrySet()) {
                 List<ActorRef> newResponsibleNodes = findResponsibleNodes(entry.getKey(), currentView);
                 for (ActorRef node : newResponsibleNodes) {
-                    node.tell(new TransferDataMsg(entry.getKey(), entry.getValue()), getSelf());
+                    int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                    getContext().getSystem().scheduler().scheduleOnce(
+                            scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                            () -> node.tell(new TransferDataMsg(entry.getKey(), entry.getValue()), getSelf()),
+                            getContext().getDispatcher()
+                    );
                 }
             }
 
             // Contact clients
             for (ActorRef client : clients) {
-                client.tell(new UpdateClientView(getSelf(),true), getSelf());
+                int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+                getContext().getSystem().scheduler().scheduleOnce(
+                        scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                        () -> client.tell(new UpdateClientView(getSelf(),true), getSelf()),
+                        getContext().getDispatcher()
+                );
             }
         }
         else {
@@ -709,7 +837,12 @@ public class Actor extends AbstractActor {
 
     private void onRecoveryMsg(RecoveryMsg msg) {
         System.out.println("Starting recovery for node " + this.id);
-        msg.helperNode.tell(new RequestView(getSelf()), getSelf());
+        int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+        getContext().getSystem().scheduler().scheduleOnce(
+                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                () -> msg.helperNode.tell(new RequestView(getSelf()), getSelf()),
+                getContext().getDispatcher()
+        );
         // timeout recovery
         recoveryTimeout = getContext().getSystem().scheduler().scheduleOnce(
                 scala.concurrent.duration.Duration.create(TIMEOUT_JOIN, "milliseconds"),
@@ -759,7 +892,12 @@ public class Actor extends AbstractActor {
             nodes_to_contact.add(currentView.get(0));
         }
         //we contact the node we obtained previously
-        nodes_to_contact.get(0).tell(new RequestValues(this.id), getSelf());
+        int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+        getContext().getSystem().scheduler().scheduleOnce(
+                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                () -> nodes_to_contact.get(0).tell(new RequestValues(this.id), getSelf()),
+                getContext().getDispatcher()
+        );
         // timeout recovery
         recoveryTimeout = getContext().getSystem().scheduler().scheduleOnce(
                 scala.concurrent.duration.Duration.create(TIMEOUT_JOIN, "milliseconds"),
@@ -809,12 +947,12 @@ public class Actor extends AbstractActor {
         //This implies that there exists something that is able to detect that a node has
         //crashed locally and that thus can enable a specific routine.
         if(msg.flag){
-            int delayMs = 100 + random.nextInt(1000); // Delay between 100ms and 3000ms
+            int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
             //System.out.println("Sending reply...");
             ActorRef originalSender = getSender();
             getContext().getSystem().scheduler().scheduleOnce(
                     scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
-                    () -> originalSender.tell(new Actor.ReceiveMsg(msg.key, -1, "null", true), getSelf()),
+                    () -> originalSender.tell(new Actor.ReceiveMsg(msg.key, 0, "null", true), getSelf()),
                     getContext().getDispatcher()
             );
         }
@@ -826,12 +964,22 @@ public class Actor extends AbstractActor {
 
     private void sendTimeoutRead(GetMsg msg){
         ActorRef originalSender = getSender();
-        originalSender.tell(new SendMsg("Read of value " + msg.key + " failed due to coordinator crashing"), getSelf());
+        int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+        getContext().getSystem().scheduler().scheduleOnce(
+                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                () -> originalSender.tell(new SendMsg("Read of value " + msg.key + " failed due to coordinator crashing"), getSelf()),
+                getContext().getDispatcher()
+        );
     }
 
     private void sendTimeoutWrite(UpdateMsg msg){
         ActorRef originalSender = getSender();
-        originalSender.tell(new SendMsg("Write of value " + msg.value + " for key " + msg.key + " failed due to coordinator crashing"), getSelf());
+        int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
+        getContext().getSystem().scheduler().scheduleOnce(
+                scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                () -> originalSender.tell(new SendMsg("Write of value " + msg.value + " for key " + msg.key + " failed due to coordinator crashing"), getSelf()),
+                getContext().getDispatcher()
+        );
     }
 
     // ---- Message classes below ----
