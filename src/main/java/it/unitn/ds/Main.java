@@ -110,14 +110,14 @@ public class Main {
         Config.MOST_RECENT_VERSION.put(((i+1)*10)-2, 1);
     }
 
-    ///*
+    /*
     System.out.println(values_to_assign);
     System.out.println(Config.MOST_RECENT_VERSION);
     for(int i=0; i<number_of_initial_nodes; i++){
         System.out.println(id_ref_association.get(nodes.get(i)));
         System.out.println(allValues.get(i));
     }
-    //*/
+    */
 
     // Create clients.
     ArrayList<ActorRef> clients = new ArrayList<>();
@@ -204,14 +204,14 @@ public class Main {
     System.out.println("-- Simulation of operations with multiple crashed nodes");
     //we simulate operations while multiple nodes are crashed
     nodes.get(0).tell(new Actor.CrashMsg(), ActorRef.noSender());
-    TimeUnit.SECONDS.sleep(3);
+    TimeUnit.SECONDS.sleep(5);
     nodes.get(1).tell(new Actor.CrashMsg(), ActorRef.noSender());
     TimeUnit.SECONDS.sleep(5);
     client0.tell(new Client.GetMsg(4), client0);
     client1.tell(new Client.GetMsg(4), client1);
     client2.tell(new Client.UpdateMsg(4, "Lettonia"), client2);
     client3.tell(new Client.UpdateMsg(8, "Lituania"), client3);
-    TimeUnit.SECONDS.sleep(1);
+    TimeUnit.SECONDS.sleep(5);
     client0.tell(new Client.GetMsg(14), client0);
     client1.tell(new Client.UpdateMsg(18, "CoreaDelSud"), client1);
     TimeUnit.SECONDS.sleep(5);
@@ -233,14 +233,14 @@ public class Main {
     nodes = Update_nodes(node, node_id, nodes, id_ref_association);
     id_ref_association.put(node, node_id);
     id_ref_association = sortByValue(id_ref_association);
-    TimeUnit.SECONDS.sleep(5);
+    TimeUnit.SECONDS.sleep(10);
     client3.tell(new Client.UpdateMsg(14, "NewValAfterJoin"), client3);
     client0.tell(new Client.GetMsg(14), client0);
-    TimeUnit.SECONDS.sleep(3);
+    TimeUnit.SECONDS.sleep(5);
     client0.tell(new Client.GetMsg(14), client0);
     client2.tell(new Client.UpdateMsg(8, "Honduras"), client2);
     client3.tell(new Client.UpdateMsg(4, "FaroeIslands"), client3);
-    TimeUnit.SECONDS.sleep(3);
+    TimeUnit.SECONDS.sleep(5);
 
     System.out.println("-- Simulation to test the Leave --");
     // Simulate leave operation
@@ -249,12 +249,40 @@ public class Main {
     nodes.get(0).tell(new Actor.LeaveMsg(id_ref_association.get(nodes.get(0)), nodes.get(0)), ActorRef.noSender());
     id_ref_association.remove(nodes.get(0));
     nodes.remove(nodes.get(0));
+    TimeUnit.SECONDS.sleep(10);
+    client0.tell(new Client.GetMsg(4), client0);
+    client2.tell(new Client.UpdateMsg(14, "Ciad"), client2);
+    client3.tell(new Client.UpdateMsg(8, "Madagascar"), client3);
+    TimeUnit.SECONDS.sleep(5);
+
+    System.out.println("-- Final Simulation with everything at once --");
+    node_id = 25;
+    node = system.actorOf(
+            Actor.props(node_id),
+            "node_25"
+    );
+    node.tell(new Actor.JoinMsg(node_id, nodes.get(1)), ActorRef.noSender());
+    nodes = Update_nodes(node, node_id, nodes, id_ref_association);
+    id_ref_association.put(node, node_id);
+    id_ref_association = sortByValue(id_ref_association);
+    TimeUnit.SECONDS.sleep(10);
+    nodes.get(0).tell(new Actor.LeaveMsg(id_ref_association.get(nodes.get(0)), nodes.get(0)), ActorRef.noSender());
+    id_ref_association.remove(nodes.get(0));
+    nodes.remove(nodes.get(0));
+    TimeUnit.SECONDS.sleep(10);
+    nodes.get(0).tell(new Actor.CrashMsg(), ActorRef.noSender());
     TimeUnit.SECONDS.sleep(5);
     client0.tell(new Client.GetMsg(4), client0);
-    client1.tell(new Client.UpdateMsg(8, "Madagascar"), client1);
-    client2.tell(new Client.UpdateMsg(14, "Ciad"), client2);
-    TimeUnit.SECONDS.sleep(3);
-
+    client0.tell(new Client.UpdateMsg(14, "Spagna"), client0);
+    client1.tell(new Client.GetMsg(4), client1);
+    client1.tell(new Client.UpdateMsg(4, "RepubblicaCeca"), client1);
+    client2.tell(new Client.GetMsg(14), client2);
+    client2.tell(new Client.UpdateMsg(8, "Galles"), client2);
+    client3.tell(new Client.GetMsg(18), client3);
+    client3.tell(new Client.UpdateMsg(18, "Svezia"), client3);
+    TimeUnit.SECONDS.sleep(10);
+    nodes.get(0).tell(new Actor.RecoveryMsg(nodes.get(2)), ActorRef.noSender());
+    TimeUnit.SECONDS.sleep(5);
     System.out.println("\n=== SIMULATION COMPLETED ===");
 
     System.out.println(">>> Press ENTER to exit <<<");

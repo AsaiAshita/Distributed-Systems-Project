@@ -959,10 +959,12 @@ public class Actor extends AbstractActor {
         else{
             //the message was sent in the scope of a get. In this case, we do nothing, as the node is crashed
             //and the daemon knows the operation will simply timeout if we do nothing 
+            System.out.println("Node " + this.id + " is crashed. Ignoring: " + msg.getClass().getSimpleName());
         }
     }
 
     private void sendTimeoutRead(GetMsg msg){
+        Config.FIFO.get(getSender()).remove(msg.request_id);
         ActorRef originalSender = getSender();
         int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
         getContext().getSystem().scheduler().scheduleOnce(
@@ -973,6 +975,7 @@ public class Actor extends AbstractActor {
     }
 
     private void sendTimeoutWrite(UpdateMsg msg){
+        Config.FIFO.get(getSender()).remove(msg.request_id);
         ActorRef originalSender = getSender();
         int delayMs = 100 + random.nextInt(QUICK_COMMUNICATION);
         getContext().getSystem().scheduler().scheduleOnce(
