@@ -12,6 +12,7 @@ public class Client extends AbstractActor {
     public static final Object GetMsg = null;
     private int id;
     private final ArrayList<ActorRef> currentView;
+    private final Random random = new Random();
 
     public Client(int id, ArrayList<ActorRef> nodes) {
         this.id = id;
@@ -34,7 +35,12 @@ public class Client extends AbstractActor {
             Config.FIFO.get(getSelf()).add(request_id);
             //System.out.println(Config.VECTOR_CLOCK);
             //System.out.println(Config.FIFO);
-            coordinator.tell(new GetMsg(msg.key, request_id), getSelf());
+            int delayMs = 100 + random.nextInt(Config.QUICK_COMMUNICATION);
+            getContext().getSystem().scheduler().scheduleOnce(
+                    scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                    () -> coordinator.tell(new GetMsg(msg.key, request_id), getSelf()),
+                    getContext().getDispatcher()
+            );
         } else {
             System.out.println("No coordinator available for GetMsg.");
         }
@@ -49,7 +55,12 @@ public class Client extends AbstractActor {
             Config.FIFO.get(getSelf()).add(request_id);
             //System.out.println(Config.VECTOR_CLOCK);
             //System.out.println(Config.FIFO);
-            coordinator.tell(new UpdateMsg(msg.key, msg.value, request_id), getSelf());
+            int delayMs = 100 + random.nextInt(Config.QUICK_COMMUNICATION);
+            getContext().getSystem().scheduler().scheduleOnce(
+                    scala.concurrent.duration.Duration.create(delayMs, "milliseconds"),
+                    () -> coordinator.tell(new UpdateMsg(msg.key, msg.value, request_id), getSelf()),
+                    getContext().getDispatcher()
+            );
         } else {
             System.out.println("No coordinator available for UpdateMsg.");
         }
